@@ -6,6 +6,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <vector>
+
+#include "registration.hpp"
 #include "uhid_report.hpp"
 #include "cbor.hpp"
 
@@ -72,10 +74,7 @@ inline std::vector<uint8_t> CTAPPacket::stringify() {
 }
 
 inline CTAPPacket respond(UHIDReport &r) {
-    CTAPPacket frame;
-    if(r.is_init_frame) {
-        
-    }
+    CTAPPacket packet;
     switch(r.cmd) {
         case CTAPHID_INIT: {
             // --- INIT PAYLOAD STRUCTURE --- 
@@ -102,10 +101,10 @@ inline CTAPPacket respond(UHIDReport &r) {
             payload.push_back(0x00);
             payload.push_back(0x00);
             payload.push_back(0x05);
-            frame.cid = 0xffffffff;
-            frame.cmd = CTAPHID_INIT | MASK;
-            frame.len = (uint16_t)payload.size();
-            frame.payload = payload;
+            packet.cid = 0xffffffff;
+            packet.cmd = CTAPHID_INIT | MASK;
+            packet.len = (uint16_t)payload.size();
+            packet.payload = payload;
             break;
         }
         case CTAPHID_CBOR: {
@@ -117,12 +116,25 @@ inline CTAPPacket respond(UHIDReport &r) {
                 // Encoding JSON in CBOR
                 payload.insert(payload.end(), cbor.begin(), cbor.end());
             } else if(r.payload[0] == 0x01) {
-                ;
+                payload.insert(payload.end(), r.payload.begin() + 1, r.payload.end());
+
+                // Debugging lol
+                printf("\x1b[1;33Payload size is: %lu\n", payload.size());
+                printf("Payload: ");
+                for(int i = 0; i < payload.size(); i++) {
+                    printf("%02x", payload[i]);
+                }
+                printf("\n\x1b[0m");
+
+                CTAPMakeCredentialRequest mcr;
+                if(!mcr.parseRequest(payload)) {
+                    std::cerr << "Fuck, there is a problem with the MCR request\n";
+                }
             }
-            frame.cid = r.cid;
-            frame.cmd = CTAPHID_CBOR | MASK;
-            frame.len = (uint16_t)payload.size();
-            frame.payload = payload;
+            packet.cid = r.cid;
+            packet.cmd = CTAPHID_CBOR | MASK;
+            packet.len = (uint16_t)payload.size();
+            packet.payload = payload;
             break;
         }
         case CTAPHID_MSG: 
@@ -133,7 +145,7 @@ inline CTAPPacket respond(UHIDReport &r) {
         case CTAPHID_ERROR:
             break;
     }
-    return frame;
+    return packet;
 }
 
 #endif

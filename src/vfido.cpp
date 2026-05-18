@@ -20,7 +20,6 @@ int main() {
     device.init();
     printf("UHID device created\n");
     UHIDReport report;
-
     while (1) {
         if(!device.get()) {
             continue;
@@ -101,10 +100,11 @@ int main() {
             }
 
             if(respd) {
-                // Respond based on the CMD
+                // Respond based on the CMD 
                 struct uhid_event resp = make_response(report);
                 device.send(resp);
                 report.clear();
+                report.seq = 0;
             }
         }
     }

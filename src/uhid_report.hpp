@@ -14,13 +14,16 @@ public:
     uint8_t cmd;
     uint16_t len;
     std::vector<uint8_t> payload;
-    bool is_init_frame;
     uint8_t seq = 0;
     void clear();
 };
 
 inline void UHIDReport::clear() {
     payload.clear();
+    cid = 0;
+    cmd = 0;
+    len = 0;
+    seq = 0;
 }
 
 #endif

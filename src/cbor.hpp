@@ -3,12 +3,6 @@
 
 #include <tinycbor/cbor.h>
 #include <vector>
-#include <array>
-
-typedef struct MakeCredentialReq {
-    std::array<uint8_t, 32> clientDataHash;
-
-} MakeCredentialReq;
 
 inline std::vector<uint8_t> build_getinfo_response() {
     uint8_t buffer[256];
