@@ -1,2 +1,4 @@
 .cache
+*.cbor
+vfido_session
 build/

@@ -7,7 +7,10 @@ set(CMAKE_CXX_STANDARD 20)
 
 add_executable(${PN}
     src/${PN}.cpp
+    src/response.cpp
+    src/registration.cpp
     src/make_cred_parsing.cpp
+    src/device.cpp
 )
 
 find_package(PkgConfig REQUIRED)

@@ -2,16 +2,25 @@
 #define REGISTRATION_HPP
 
 #include <array>
-#include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <iostream>
 #include <string>
 #include <sys/types.h>
 #include <unordered_map>
+#include <variant>
 #include <vector>
 
 #include <tinycbor/cbor.h>
+
+enum class Type {
+        Bool,
+        Int,
+        String,
+        Bytes,
+        Map,
+        Array,
+        Unknown
+};
 
 typedef struct RelyingParty {
     std::string id;
@@ -40,85 +49,64 @@ typedef struct PubKeyCredParam {
     }
 } PubKeyCredParam;
 
+typedef struct PublicKeyCredentialDescriptor {
+    std::string type;
+    std::vector<uint8_t> id;
+    std::vector<std::string> transports;
+} PublicKeyCredentialDescriptor;
+
+typedef struct ExtensionValue{
+    Type type;
+    std::variant<bool, int64_t, std::string, std::vector<uint8_t>> value;
+} ExtensionValue;
+
 class CTAPMakeCredentialRequest {
-public:
-    RelyingParty rp;
-    UserEntity user;
-    std::array<uint8_t, 32> clientDataHash;
-    std::vector<PubKeyCredParam> publicKeyCredParams;
-    std::vector<std::vector<uint8_t>> excludeList;
-    std::unordered_map<std::string, std::string> extensions;
+    public:
+        RelyingParty rp;
+        UserEntity user;
+        std::array<uint8_t, 32> clientDataHash;
+        std::vector<PubKeyCredParam> publicKeyCredParams;
+        std::vector<PublicKeyCredentialDescriptor> excludeList;
+        std::unordered_map<std::string, ExtensionValue> extensions;
+        std::unordered_map<std::string, bool> options = {
+            {"rk", false},
+            {"uv", false},
+            {"up", true}
+        };
+        std::vector<uint8_t> pinAuth;
+        uint64_t pinProtocol;
+        bool parseRequest(std::vector<uint8_t> &payload);
 
-    bool rk = false;
-    bool uv = false;
-    bool up = true;
-    bool parseRequest(std::vector<uint8_t> &payload);
-private:
-    bool parse_client_data_hash(CborValue &map);
-    bool parse_rp(CborValue &map);
-    bool parse_user(CborValue &map);
-    bool parse_pubkey_params(CborValue &map);
-    void clear() {
-        rp.clear();
-        user.clear();
-        publicKeyCredParams.clear();
-        excludeList.clear();
-        extensions.clear();
-    }
-};
-
-inline bool CTAPMakeCredentialRequest::parseRequest(
-        std::vector<uint8_t> &payload
-) {
-    clear();
-    uint8_t *buf = payload.data();
-    size_t len = payload.size();
-    CborParser parser;
-    CborValue it;
-
-    CborError err = cbor_parser_init(buf, len, 0, &parser, &it);
-    if(err != CborNoError) {
-        return false;
-    }
-
-    if(!cbor_value_is_map(&it)) {
-        std::cerr << "Not a CBOR data!\n";
-        return false;
-    }
-
-    CborValue map;
-    cbor_value_enter_container(&it, &map);
-    while(!cbor_value_at_end(&map)) {
-        uint64_t key;
-        cbor_value_get_uint64(&map, &key);
-        cbor_value_advance_fixed(&map);
-        switch(key) {
-            case 1:  // clientDataHash (0x01) 
-                if(!parse_client_data_hash(map)) {
-                    return false;
-                }
-               break;
-            case 2:  // RelyingParty (0x02)
-                if(!parse_rp(map)) {
-                    return false;
-                }
-                break;
-            case 3:  // User (0x03)
-               if(!parse_user(map)) {
-                    return false;
-               }
-               break;
-            case 4:  // PubKeyCredParameters (0x04)
-                if(!parse_pubkey_params(map)) {
-                    return false;
-                }
-                break;
+    private:
+        bool parse_client_data_hash(CborValue &map);
+        bool parse_rp(CborValue &map);
+        bool parse_user(CborValue &map);
+        bool parse_pubkey_params(CborValue &map);
+        bool parse_exclude_list(CborValue &map);
+        bool parse_extensions(CborValue &map);
+        bool parse_options(CborValue &map);
+        bool parse_pin_auth(CborValue &map);
+        bool parse_pin_protocol(CborValue &map);
+        using ParseFn = bool (CTAPMakeCredentialRequest::*)(CborValue &value);
+        std::array<ParseFn, 10> dispatch_table = {
+            nullptr,
+            &CTAPMakeCredentialRequest::parse_client_data_hash,
+            &CTAPMakeCredentialRequest::parse_rp,
+            &CTAPMakeCredentialRequest::parse_user,
+            &CTAPMakeCredentialRequest::parse_pubkey_params,
+            &CTAPMakeCredentialRequest::parse_exclude_list,
+            &CTAPMakeCredentialRequest::parse_extensions,
+            &CTAPMakeCredentialRequest::parse_options,
+            &CTAPMakeCredentialRequest::parse_pin_auth,
+            &CTAPMakeCredentialRequest::parse_pin_protocol
+        };
+        void clear() {
+            rp.clear();
+            user.clear();
+            publicKeyCredParams.clear();
+            excludeList.clear();
+            extensions.clear();
         }
-    }
-
-    cbor_value_leave_container(&it, &map);
-
-    return true; 
-}
+};
 
 #endif
