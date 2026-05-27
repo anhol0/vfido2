@@ -1,6 +1,8 @@
 #include <iostream>
 #include <cstdint>
 #include "response.hpp"
+#include "error.hpp"
+#include "event.hpp"
 #include "uhid_report.hpp"
 #include "cbor.hpp"
 #include "registration.hpp"
@@ -108,19 +110,22 @@ CTAPPacket respond(UHIDReport &r) {
             } else if(r.payload[0] == 0x01) {
                 payload.insert(payload.end(), r.payload.begin() + 1, r.payload.end());
 
-                // Debugging lol
+                // Debugging payload reassembly
                 printf("\x1b[1;33mPayload size is: %lu\n", payload.size());
                 printf("Payload: ");
                 for(int i = 0; i < payload.size(); i++) {
                     printf("%02x", payload[i]);
                 }
                 printf("\n\x1b[0m");
+                // 
 
                 CTAPMakeCredentialRequest mcr;
                 if(!mcr.parseRequest(payload)) {
-                    std::cerr << "Fuck, there is a problem with the MCR request\n";
-                }
-                
+                    std::cerr << "There is a problem with the MCR request\n";
+                    // send_failure(CTAP_ERR_SMTH);
+                    device.send_err(CTAPError::CTAP2_ERR_INVALID_CBOR, r.cid);
+                    return {};
+                } 
             }
             packet.cid = r.cid;
             packet.cmd = CTAPHID_CBOR | MASK;
