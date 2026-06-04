@@ -2,7 +2,6 @@
 #include "credential.hpp"
 #include "device.hpp"
 #include "error.hpp"
-#include "response.hpp"
 #include "uhid_report.hpp"
 #include "macro.hpp"
 #include <cstdint>
@@ -14,6 +13,9 @@
 // Payload length (2 Bytes)
 // Payload (N Bytes)
 // Padding (zero everything until 64 bytes)
+
+CredentialStore store;
+FIDODevice device;
 
 void run(FIDODevice &device) {
     UHIDReport report;
@@ -72,7 +74,11 @@ void run(FIDODevice &device) {
                 report.seq = data[5]; 
                 if(expected_seq != report.seq) {
                     std::cerr << "Continuation packets out of order\n";
-                    device.send_err(CTAPError::CTAP1_ERR_INVALID_SEQ, report.cid); 
+                    auto p = make_err(CTAPError::CTAP1_ERR_INVALID_SEQ, report.cid);
+                    auto resp = make_response(p);
+                    for(auto &r : resp) {
+                        device.send(r);
+                    }
                     report.clear();
                     continue;
                 }
@@ -91,7 +97,7 @@ void run(FIDODevice &device) {
 
             if(respd) {
                 // Respond based on the CMD 
-                auto resp = make_response(report);
+                auto resp = make_response(report); 
                 for(auto &r : resp) {
                     device.send(r);
                 }

@@ -1,6 +1,5 @@
 #pragma once
 
-#include "response.hpp"
 #include "uhid_report.hpp"
 #include <array>
 #include <cstdint>
@@ -77,7 +76,7 @@ class CTAPMakeCredentialRequest {
         std::vector<uint8_t> pinAuth;
         uint64_t pinProtocol;
         bool parseRequest(std::vector<uint8_t> &payload);
-        void build_response(UHIDReport &r);
+        std::vector<uint8_t> build_response(UHIDReport &r);
     private:
         bool parse_client_data_hash(CborValue &map);
         bool parse_rp(CborValue &map);
