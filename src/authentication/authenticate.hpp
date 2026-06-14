@@ -9,23 +9,9 @@
 #include <variant>
 #include "uhid_report.hpp"
 #include "credentials/credential.hpp"
+#include "extensions.hpp"
 
-enum class Type {
-        Bool,
-        Int,
-        String,
-        Bytes,
-        Map,
-        Array,
-        Unknown
-};
-
-typedef struct ExtensionValue{
-    Type type;
-    std::variant<bool, int64_t, std::string, std::vector<uint8_t>> value;
-} ExtensionValue;
-
-class CTAPGetAsserionRequest {
+class CTAPGetAssertionRequest {
 public:
     std::string rpId;
     std::vector<uint8_t> clientDataHash;
@@ -37,7 +23,7 @@ public:
         {"up", true}
     };
     std::vector<uint8_t> pinAuth;
-    uint32_t pinProtocol;
+    uint64_t pinProtocol;
     bool parseRequest(std::vector<uint8_t> &payload);
     std::vector<uint8_t> build_response(UHIDReport &r);
 private:
@@ -48,16 +34,16 @@ private:
     bool parse_options(CborValue &map);
     bool parse_pin_auth(CborValue &map);
     bool parse_pin_protocol(CborValue &map);
-    using ParseFn = bool (CTAPGetAsserionRequest::*) (CborValue &value);
+    using ParseFn = bool (CTAPGetAssertionRequest::*) (CborValue &value);
     std::array<ParseFn, 8> dispatch_table = {
         nullptr,
-        &CTAPGetAsserionRequest::parse_rp_id,
-        &CTAPGetAsserionRequest::parse_client_data_hash,
-        &CTAPGetAsserionRequest::parse_allow_list,
-        &CTAPGetAsserionRequest::parse_extensions,
-        &CTAPGetAsserionRequest::parse_options,
-        &CTAPGetAsserionRequest::parse_pin_auth,
-        &CTAPGetAsserionRequest::parse_pin_protocol
+        &CTAPGetAssertionRequest::parse_rp_id,
+        &CTAPGetAssertionRequest::parse_client_data_hash,
+        &CTAPGetAssertionRequest::parse_allow_list,
+        &CTAPGetAssertionRequest::parse_extensions,
+        &CTAPGetAssertionRequest::parse_options,
+        &CTAPGetAssertionRequest::parse_pin_auth,
+        &CTAPGetAssertionRequest::parse_pin_protocol
     }; 
     void clear() {
 

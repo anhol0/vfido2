@@ -7,6 +7,7 @@
 #include "uhid_report.hpp"
 #include "cbor_operations/cbor.hpp"
 #include "registration/registration.hpp"
+#include "authentication/authenticate.hpp"
 
 extern CredentialStore store;
 
@@ -126,7 +127,7 @@ std::optional<CTAPPacket> respond(UHIDReport &r) {
 
                 CTAPMakeCredentialRequest mcr;
                 if(!mcr.parseRequest(payload)) {
-                    std::cerr << "There is a problem with the MCR request\n";
+                    std::cerr << "There is a problem with the authenticatorMakeCredential request\n";
                     return make_err(CTAPError::CTAP2_ERR_INVALID_CBOR, r.cid);
                 }
                 if(mcr.rp.id == "make.me.blink") {
@@ -141,8 +142,7 @@ std::optional<CTAPPacket> respond(UHIDReport &r) {
             
             else if(r.payload[0] == 0x02) {          // authenticatorGetAssertion
                 std::cout << "Got authenticatorGetAssertion command\n";
-                return make_err(CTAPError::CTAP2_ERR_NO_CREDENTIALS, r.cid);
-                payload.insert(payload.end(), r.payload.begin(), r.payload.end());
+                payload.insert(payload.end(), r.payload.begin() + 1, r.payload.end());
                 
                 printf("\x1b[1;33mauthenticatorGetAssertion payload size is: %lu\n", payload.size());
                 printf("Payload: ");
@@ -151,6 +151,12 @@ std::optional<CTAPPacket> respond(UHIDReport &r) {
                 }
                 printf("\n\x1b[0m");
 
+                CTAPGetAssertionRequest gar;
+                if(!gar.parseRequest(payload)) {
+                    std::cerr << "There is a problem with the authenticatorGetAssertion request\n";
+                    return make_err(CTAPError::CTAP2_ERR_INVALID_CBOR, r.cid);
+                }
+                return make_err(CTAPError::CTAP2_ERR_NO_CREDENTIALS, r.cid);
 
             }
             packet.cid = r.cid;

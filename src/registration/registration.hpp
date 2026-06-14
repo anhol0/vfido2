@@ -2,6 +2,7 @@
 
 #include "uhid_report.hpp"
 #include "credentials/credential.hpp"
+#include "extensions.hpp"
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -12,16 +13,6 @@
 #include <vector>
 
 #include <tinycbor/cbor.h>
-
-enum class Type {
-        Bool,
-        Int,
-        String,
-        Bytes,
-        Map,
-        Array,
-        Unknown
-};
 
 typedef struct RelyingParty {
     std::string id;
@@ -49,11 +40,6 @@ typedef struct PubKeyCredParam {
         type.clear();
     }
 } PubKeyCredParam;
-
-typedef struct ExtensionValue{
-    Type type;
-    std::variant<bool, int64_t, std::string, std::vector<uint8_t>> value;
-} ExtensionValue;
 
 class CTAPMakeCredentialRequest {
     public:
