@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <iostream>
 
-// --- HEADER STRUCTURE ---
+// --- PACKET STRUCTURE ---
 // Channel ID (4 Bytes)
 // CMD (1 Byte)
 // Payload length (2 Bytes)

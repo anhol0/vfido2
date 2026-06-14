@@ -9,17 +9,25 @@ set(SOURCE_DIR src)
 
 
 add_executable(${PN}
+    # Uncategorized
     ${SOURCE_DIR}/${PN}.cpp
     ${SOURCE_DIR}/event.cpp
     ${SOURCE_DIR}/response.cpp
     ${SOURCE_DIR}/device.cpp
-    ${SOURCE_DIR}/cbor.cpp
+    # Registration
     ${SOURCE_DIR}/registration/registration.cpp
-    ${SOURCE_DIR}/registration/make_cred_parsing.cpp
     ${SOURCE_DIR}/registration/make_authmakecred_response.cpp
+    # Credential storing
     ${SOURCE_DIR}/credentials/credential.cpp
+    # Cryptography operations
     ${SOURCE_DIR}/cryptography/crypto.cpp
     ${SOURCE_DIR}/cryptography/tpm.cpp
+    # Authentication
+    ${SOURCE_DIR}/authentication/authenticate.cpp
+    ${SOURCE_DIR}/authentication/get_assertion_parsing.cpp
+    # CBOR Operations
+    ${SOURCE_DIR}/cbor_operations/cbor.cpp
+    ${SOURCE_DIR}/cbor_operations/make_cred_parsing.cpp
 )
 
 find_package(PkgConfig REQUIRED)

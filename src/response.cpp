@@ -5,10 +5,9 @@
 #include "credentials/credential.hpp"
 #include "device.hpp"
 #include "uhid_report.hpp"
-#include "cbor.hpp"
+#include "cbor_operations/cbor.hpp"
 #include "registration/registration.hpp"
 
-extern FIDODevice device;
 extern CredentialStore store;
 
 uint32_t gen_cid() {
@@ -151,6 +150,8 @@ std::optional<CTAPPacket> respond(UHIDReport &r) {
                     printf("%02x", payload[i]);
                 }
                 printf("\n\x1b[0m");
+
+
             }
             packet.cid = r.cid;
             packet.cmd = CTAPHID_CBOR | MASK;
