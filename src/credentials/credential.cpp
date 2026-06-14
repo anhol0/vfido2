@@ -1,5 +1,5 @@
 #include "credential.hpp"
-#include "tpm.hpp"
+#include "cryptography/tpm.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>

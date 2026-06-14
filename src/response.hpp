@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <vector>
+#include <optional>
 
 #include "uhid_report.hpp"
 
@@ -33,6 +34,6 @@ public:
 };
 
 uint32_t gen_cid();
-CTAPPacket respond(UHIDReport &r);
+std::optional<CTAPPacket> respond(UHIDReport &r);
 
 #endif

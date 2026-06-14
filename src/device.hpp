@@ -4,6 +4,7 @@
 #include "error.hpp"
 #include "uhid_report.hpp"
 #include "response.hpp"
+
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -14,6 +15,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <vector>
+#include <optional>
 
 class FIDODevice {
 public:
@@ -30,7 +32,7 @@ private:
     const std::array<uint8_t, 34> fido_report_desc;
 };
 
-std::vector<uhid_event> make_response(UHIDReport &report); 
+std::optional<std::vector<uhid_event>> make_response(UHIDReport &report); 
 std::vector<uhid_event> make_response(CTAPPacket &packet);
 CTAPPacket make_err(CTAPError err, uint32_t cid);
 

@@ -7,14 +7,14 @@
 #include <openssl/ec.h>
 
 #include "cbor.hpp"
-#include "credential.hpp"
+#include "credentials/credential.hpp"
 #include "device.hpp"
 #include "error.hpp"
-#include "registration.hpp"
-#include "crypto.hpp"
+#include "registration/registration.hpp"
+#include "cryptography/crypto.hpp"
 #include "const.hpp"
 #include "uhid_report.hpp"
-#include "tpm.hpp"
+#include "cryptography/tpm.hpp"
 
 extern FIDODevice device;
 extern CredentialStore store;

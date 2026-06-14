@@ -3,7 +3,7 @@
 
 #include "device.hpp"
 #include "event.hpp"
-#include "credential.hpp"
+#include "credentials/credential.hpp"
 
 extern FIDODevice device;
 extern CredentialStore store;

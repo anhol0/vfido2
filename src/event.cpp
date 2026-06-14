@@ -1,5 +1,5 @@
 #include "event.hpp"
-#include "credential.hpp"
+#include "credentials/credential.hpp"
 #include "device.hpp"
 #include "error.hpp"
 #include "uhid_report.hpp"
@@ -97,12 +97,16 @@ void run(FIDODevice &device) {
 
             if(respd) {
                 // Respond based on the CMD 
-                auto resp = make_response(report); 
+                auto resp_opt = make_response(report); 
+                if(!resp_opt.has_value()) {
+                    report.clear();
+                    continue;
+                }
+                auto resp = resp_opt.value();
                 for(auto &r : resp) {
                     device.send(r);
                 }
                 report.clear();
-                report.seq = 0;
             }
         }
     }
