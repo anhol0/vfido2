@@ -45,7 +45,7 @@ class CTAPMakeCredentialRequest {
     public:
         RelyingParty rp;
         UserEntity user;
-        std::array<uint8_t, 32> clientDataHash;
+        std::vector<uint8_t> clientDataHash;
         std::vector<PubKeyCredParam> publicKeyCredParams;
         std::vector<PublicKeyCredentialDescriptor> excludeList;
         std::unordered_map<std::string, ExtensionValue> extensions;
