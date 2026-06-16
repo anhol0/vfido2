@@ -45,7 +45,7 @@ std::vector<uint8_t> build_getinfo_response() {
     cbor_encode_boolean(&options, false);
 
     cbor_encode_text_stringz(&options, "up");
-    cbor_encode_boolean(&options, true);
+    cbor_encode_boolean(&options, false);
 
     cbor_encode_text_stringz(&options, "uv");
     cbor_encode_boolean(&options, false);

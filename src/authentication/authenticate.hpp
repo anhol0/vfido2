@@ -46,6 +46,12 @@ private:
         &CTAPGetAssertionRequest::parse_pin_protocol
     }; 
     void clear() {
-
+        rpId.clear();
+        clientDataHash.resize(0);
+        allowList.clear();
+        extensions.clear();
+        options.clear();
+        pinAuth.clear();
+        pinProtocol = 0;
     }
 };
