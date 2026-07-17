@@ -14,7 +14,7 @@ extern CredentialStore store;
 uint32_t gen_cid() {
     uint32_t cid;
     do {
-        arc4random_buf(&cid, sizeof(cid));    
+        arc4random_buf(&cid, sizeof(cid));
     } while (cid == 0xffffffff);
     return cid;
 }
@@ -36,7 +36,7 @@ std::vector<std::vector<uint8_t>> CTAPPacket::stringify() {
     while(out_v.size() < 64) {
         if(i < payload.size()) {
             out_v.push_back(payload[i]);
-        } else 
+        } else
             out_v.push_back(0x00);
         i++;
     }
@@ -66,19 +66,19 @@ std::vector<std::vector<uint8_t>> CTAPPacket::stringify() {
         }
         printf("\n");
     }
-    return out; 
+    return out;
 }
 
 std::optional<CTAPPacket> respond(UHIDReport &r) {
     CTAPPacket packet;
     switch(r.cmd) {
         case CTAPHID_INIT: {
-            // --- INIT PAYLOAD STRUCTURE --- 
-            // Echoed Nonce (8 Bytes) 
-            // New Channel ID (4 bytes) 
+            // --- INIT PAYLOAD STRUCTURE ---
+            // Echoed Nonce (8 Bytes)
+            // New Channel ID (4 bytes)
             // Protocol version identifier (1 Byte) (02)
-            // Major device version number (1 Byte) 
-            // Minor device version number (i Byte) 
+            // Major device version number (1 Byte)
+            // Minor device version number (i Byte)
             // Build number (1 Byte)
             // Capabilities (1 Byte)
             uint32_t new_cid = gen_cid();
@@ -87,7 +87,7 @@ std::optional<CTAPPacket> respond(UHIDReport &r) {
                 std::perror("Broken INIT packet arrived");
                 break;
             }
-            payload.insert(payload.end(), r.payload.begin(), r.payload.begin() + 8); 
+            payload.insert(payload.end(), r.payload.begin(), r.payload.begin() + 8);
             payload.push_back((new_cid >> 24) & 0xFF);
             payload.push_back((new_cid >> 16) & 0xFF);
             payload.push_back((new_cid >>  8) & 0xFF);
@@ -105,14 +105,14 @@ std::optional<CTAPPacket> respond(UHIDReport &r) {
         }
         case CTAPHID_CBOR: {
             std::vector<uint8_t> payload;
-            // Payload generation 
+            // Payload generation
             if(r.payload[0] == 0x04) {              // authenticatorGetInfo
-                // CBOR 
+                // CBOR
                 auto cbor = build_getinfo_response();
                 // Encoding JSON in CBOR
                 payload.insert(payload.end(), cbor.begin(), cbor.end());
-            } 
-            
+            }
+
             else if(r.payload[0] == 0x01) {       // authenticatorMakeCredential
                 payload.insert(payload.end(), r.payload.begin() + 1, r.payload.end());
 
@@ -123,27 +123,42 @@ std::optional<CTAPPacket> respond(UHIDReport &r) {
                     printf("%02x", payload[i]);
                 }
                 printf("\n\x1b[0m");
-                // 
+                //
 
+                // Parsing the request
                 CTAPMakeCredentialRequest mcr;
                 if(!mcr.parseRequest(payload)) {
                     std::cerr << "There is a problem with the authenticatorMakeCredential request\n";
                     return make_err(CTAPError::CTAP2_ERR_INVALID_CBOR, r.cid);
                 }
+
+                // Idk how to handle when packet arrives with make.me.blink Relying Party ID
+                // Returning empty response to avoid further processing
                 if(mcr.rp.id == "make.me.blink") {
                     return {};
                 }
-                payload = mcr.build_response(r);
+
+                // Building the response
+                try {
+                    payload = mcr.build_response(r);
+                } catch(std::exception &e) {
+                    std::cerr << "There is a problem with the authenticatorMakeCredential request: " << e.what() << "\n";
+                    return make_err(CTAPError::CTAP2_ERR_INVALID_CBOR, r.cid);
+                }
+
+                // Returning error in case of single-byte payload
+                // The byte is a CTAP error code
                 if(payload.size() == 1) {
                     std::cout << "Build single-byte payload\n";
                     return make_err(static_cast<CTAPError>(payload[0]), r.cid);
                 }
-            } 
-            
+            }
+
             else if(r.payload[0] == 0x02) {          // authenticatorGetAssertion
                 std::cout << "Got authenticatorGetAssertion command\n";
                 payload.insert(payload.end(), r.payload.begin() + 1, r.payload.end());
-                
+
+                // Print payload contents for debugging purposes
                 printf("\x1b[1;33mauthenticatorGetAssertion payload size is: %lu\n", payload.size());
                 printf("Payload: ");
                 for(int i = 0; i < payload.size(); i++) {
@@ -151,11 +166,22 @@ std::optional<CTAPPacket> respond(UHIDReport &r) {
                 }
                 printf("\n\x1b[0m");
 
+                // Parse the authenticatorGetAssertion request
                 CTAPGetAssertionRequest gar;
                 if(!gar.parseRequest(payload)) {
                     std::cerr << "There is a problem with the authenticatorGetAssertion request\n";
                     return make_err(CTAPError::CTAP2_ERR_INVALID_CBOR, r.cid);
                 }
+
+                try {
+                    payload = gar.build_response(r);
+                } catch (const std::exception& e) {
+                    std::cerr << "Error building response: " << e.what() << "\n";
+                    return make_err(CTAPError::CTAP2_ERR_INVALID_CBOR, r.cid);
+                }
+
+                // For now working on the logic to handle the request
+                // so returning that there are no credentials
                 return make_err(CTAPError::CTAP2_ERR_NO_CREDENTIALS, r.cid);
 
             }
@@ -165,14 +191,13 @@ std::optional<CTAPPacket> respond(UHIDReport &r) {
             packet.payload = payload;
             break;
         }
-        case CTAPHID_MSG: 
+        case CTAPHID_MSG:
         case CTAPHID_CANCEL:
         case CTAPHID_PING:
         case CTAPHID_WINK:
         case CTAPHID_LOCK:
         case CTAPHID_ERROR:
             break;
-    } 
+    }
     return packet;
 }
-

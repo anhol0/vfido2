@@ -24,6 +24,7 @@ add_executable(${PN}
     ${SOURCE_DIR}/cryptography/tpm.cpp
     # Authentication
     ${SOURCE_DIR}/authentication/authenticate.cpp
+    ${SOURCE_DIR}/authentication/get_assertion_response.cpp
     # CBOR Operations
     ${SOURCE_DIR}/cbor_operations/cbor.cpp
     ${SOURCE_DIR}/cbor_operations/make_cred_parsing.cpp

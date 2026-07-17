@@ -24,7 +24,7 @@ void run(FIDODevice &device) {
             continue;
         }
 
-        // If input from the browser 
+        // If input from the browser
         if (device.get_type() == UHID_OUTPUT) {
 
             printf("\x1b[1;31mGot data: \x1b[0m");
@@ -45,11 +45,11 @@ void run(FIDODevice &device) {
                                ((uint32_t)data[2] << 16) |
                                ((uint32_t)data[3] << 8 ) |
                                ((uint32_t)data[4]);
-                // Command (1 byte) 
+                // Command (1 byte)
                 uint8_t cmd = data[5] & 0x7F;
                 // Length of the nonce (2 bytes)
                 uint16_t length = ((uint16_t)data[6] << 8) |
-                                  ((uint16_t)data[7]); 
+                                  ((uint16_t)data[7]);
 
                 report.cid = cid;
                 report.cmd = cmd;
@@ -61,17 +61,17 @@ void run(FIDODevice &device) {
                         report.payload.push_back(data[8+i]);
                     }
                     respd = false;
-                } 
+                }
                 // If init packet is the only one in the packet sequence
                 else {
                     for(int i = 0; i < report.len; i++) {
-                        report.payload.push_back(data[8+i]); 
+                        report.payload.push_back(data[8+i]);
                     }
                     respd = true;
-                }             
+                }
             } else {
                 uint8_t expected_seq = report.seq;
-                report.seq = data[5]; 
+                report.seq = data[5];
                 if(expected_seq != report.seq) {
                     std::cerr << "Continuation packets out of order\n";
                     auto p = make_err(CTAPError::CTAP1_ERR_INVALID_SEQ, report.cid);
@@ -83,9 +83,9 @@ void run(FIDODevice &device) {
                     continue;
                 }
                 report.seq++;
-                // If continuation packet 
+                // If continuation packet
                 for(int i = 0; i < MAX_CONT_PAYLOAD_SIZE; i++) {
-                    report.payload.push_back(data[6+i]);                    
+                    report.payload.push_back(data[6+i]);
                     // If size of payload recieved = size of payload expected
                     // Break tf out
                     if(report.payload.size() >= report.len) {
@@ -96,15 +96,24 @@ void run(FIDODevice &device) {
             }
 
             if(respd) {
-                // Respond based on the CMD 
-                auto resp_opt = make_response(report); 
-                if(!resp_opt.has_value()) {
-                    report.clear();
-                    continue;
-                }
-                auto resp = resp_opt.value();
-                for(auto &r : resp) {
-                    device.send(r);
+                try {
+                    // Respond based on the CMD
+                    auto resp_opt = make_response(report);
+                    if(!resp_opt.has_value()) {
+                        report.clear();
+                        continue;
+                    }
+                    auto resp = resp_opt.value();
+                    for(auto &r : resp) {
+                        device.send(r);
+                    }
+                } catch (const std::exception& e) {
+                    std::cerr << "Unhandled fatal exception in event loop: " << e.what() << "\n";
+                    auto error_payload = make_err(CTAPError::CTAP1_ERR_OTHER, report.cid);
+                    auto error = make_response(error_payload);
+                    for(auto &e : error) {
+                        device.send(e);
+                    }
                 }
                 report.clear();
             }

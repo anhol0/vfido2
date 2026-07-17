@@ -34,15 +34,16 @@ class CredentialStore {
 
         bool has(const std::vector<uint8_t> &credId) const;
         void put(const StoredCredential &cred);
-        const StoredCredential& get(const std::vector<uint8_t> &credId) const;
+        const StoredCredential& get_by_credId(const std::vector<uint8_t> &credId) const;
+        const std::unordered_map<std::string, StoredCredential> get_all_creds() const;
         void incrementSigCount(const std::vector<uint8_t> &credId);
         std::string toHex(const std::vector<uint8_t> &v) const;
         std::vector<uint8_t> fromHex(const std::string &s);
         
         private:
+        std::unordered_map<std::string, StoredCredential> stored_;
         std::vector<uint8_t> decrypt(std::vector<uint8_t> &ciphertext);
         std::vector<uint8_t> encrypt(std::vector<uint8_t> &plaintext);
-        std::unordered_map<std::string, StoredCredential> stored_;
         std::vector<uint8_t> storeKey_;
         int signCounter = 0;
 };

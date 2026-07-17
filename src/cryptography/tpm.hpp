@@ -23,14 +23,13 @@ struct TpmCtx {
 typedef struct CredentialKey {
     std::vector<uint8_t> publicBlob;
     std::vector<uint8_t> privateBlob;
-} CredentialKey; 
+} CredentialKey;
 
 // Returns 32 bit encryption key.
-// On the first run generates it using TPM 
+// On the first run generates it using TPM
 // On subsequent runs gets it from the TPM NVRAM
 ESYS_TR create_primary(ESYS_CONTEXT *ctx);
 std::vector<uint8_t> get_or_create_store_key();
 CredentialKey create_credential_key(ESYS_CONTEXT *ctx, ESYS_TR primaryHandle);
-std::array<std::vector<uint8_t>, 2> extract(std::vector<uint8_t> &pubBlob);
-
-
+std::array<std::vector<uint8_t>, 2> extractPublic(std::vector<uint8_t> &pubBlob);
+std::vector<uint8_t> sign(std::vector<uint8_t> &data, std::vector<uint8_t> &publicBlob, std::vector<uint8_t> &privateBlob);

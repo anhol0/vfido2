@@ -12,5 +12,6 @@ struct Credential {
 };
 
 std::vector<uint8_t> sha256(std::string &str);
+std::vector<uint8_t> sha256(std::vector<uint8_t> &bytes);
 
 #endif
