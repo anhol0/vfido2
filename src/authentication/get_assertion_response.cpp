@@ -2,7 +2,9 @@
 #include "cryptography/tpm.hpp"
 #include "error.hpp"
 #include <openssl/rand.h>
+#include <stdexcept>
 #include "cryptography/crypto.hpp"
+#include <iostream>
 
 extern CredentialStore store;
 
@@ -49,8 +51,9 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(UHIDReport &r)
     }
 
     StoredCredential credential_for_authentication = {};
-    if(number_of_credentials > 1 && allowList.size() != 0) {
+    if(number_of_credentials > 0) {
         credential_for_authentication = available_credentials[0];
+        std::cout << "Credential found!\n";
         // TODO:
         // Sign the clientDataHash along with authData with the selected credential,
         // using the structure specified in https://www.w3.org/TR/webauthn/#assertion-signature
@@ -77,7 +80,11 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(UHIDReport &r)
         std::vector<uint8_t> verificaton_data = authData;
         verificaton_data.insert(verificaton_data.end(), clientDataHash.begin(), clientDataHash.end());
         auto verification_data_hash = sha256(verificaton_data);
-        auto signature = sign(verification_data_hash, credential_for_authentication.public_blob, credential_for_authentication.private_blob);
-
+        TpmCtx tpm;
+        TpmLocalHandle primary = get_primary(tpm.ctx);
+        auto signature = sign(tpm.ctx, primary, verification_data_hash, credential_for_authentication.public_blob, credential_for_authentication.private_blob);
+    } else {
+        std::cout << "Credential not found!\n";
     }
+    throw std::runtime_error("TODO: AUTHENTICATION");
 }
