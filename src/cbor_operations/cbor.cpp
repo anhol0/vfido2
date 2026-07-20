@@ -45,7 +45,7 @@ std::vector<uint8_t> build_getinfo_response() {
     cbor_encode_boolean(&options, false);
 
     cbor_encode_text_stringz(&options, "up");
-    cbor_encode_boolean(&options, false);
+    cbor_encode_boolean(&options, true);
 
     cbor_encode_text_stringz(&options, "uv");
     cbor_encode_boolean(&options, false);
@@ -72,14 +72,14 @@ std::vector<uint8_t> build_getinfo_response() {
 std::vector<uint8_t> pad32(std::vector<uint8_t> &v) {
     if(v.size() > 32)
         throw std::runtime_error("ECC coordinate too large!");
-    
+
     std::vector<uint8_t> out(32, 0);
     memcpy(out.data() + (32 - v.size()), v.data(), v.size());
     return out;
 }
 
 std::vector<uint8_t> build_cose_key(
-        std::vector<uint8_t> &x, 
+        std::vector<uint8_t> &x,
         std::vector<uint8_t> &y
 ) {
     auto x_pad = pad32(x);
@@ -108,13 +108,13 @@ std::vector<uint8_t> build_cose_key(
     }
     std::cout << std::endl;
     cbor_encode_byte_string(&map, x_pad.data(), x_pad.size());
-    
+
     cbor_encode_int(&map, -3);
     std::cout << "Y-coordinate for public key: ";
     for (auto byte : y_pad) {
         std::cout << std::format("{:02x}", byte);
     }
-    std::cout << std::endl;    
+    std::cout << std::endl;
     cbor_encode_byte_string(&map, y_pad.data(), y_pad.size());
 
     e = cbor_encoder_close_container(&encoder, &map);
@@ -131,7 +131,7 @@ std::vector<uint8_t> build_cose_key(
 }
 
 std::vector<uint8_t> build_authenticatorMakeCredential_response(std::vector<uint8_t> &authData) {
-    uint8_t buf[1024];      
+    uint8_t buf[1024];
     CborEncoder encoder;
     CborEncoder map;
     CborEncoder attStmt;
@@ -157,6 +157,73 @@ std::vector<uint8_t> build_authenticatorMakeCredential_response(std::vector<uint
     size_t len = cbor_encoder_get_buffer_size(&encoder, buf);
     std::vector<uint8_t> out;
     out.push_back(0x00);  // CTAP success byte
+    out.insert(out.end(), buf, buf + len);
+    return out;
+}
+
+std::vector<uint8_t> build_authenticatorGetAssertion_response(
+        std::vector<uint8_t> &authData,
+        std::vector<uint8_t> &signature,
+        std::optional<StoredCredential> credential,
+        uint32_t numberOfCredentials
+) {
+    uint8_t buf[2048];
+    CborEncoder encoder;
+    CborEncoder map;
+    cbor_encoder_init(&encoder, buf, sizeof(buf), 0);
+
+    // If the allowList has exactly 1 credential in it, we can omit credential field completely
+    // This allows map to be 2 fields in size
+    // Otherwize, map size is 3
+    size_t mapSize = credential.has_value() ? 4 : 2;
+    if(numberOfCredentials > 1) {
+        mapSize++;
+    }
+
+    cbor_encoder_create_map(&encoder, &map, mapSize);
+    if(credential.has_value()) {
+        // credential: PublicKeyCredentialDescriptor (0x01)
+        cbor_encode_uint(&map, 0x01);
+        CborEncoder credenrialMap;
+        cbor_encoder_create_map(&map, &credenrialMap, 2); // id and type values. type is always public-key
+        cbor_encode_text_stringz(&credenrialMap, "id");
+        cbor_encode_byte_string(&credenrialMap, credential.value().id.data(), credential.value().id.size());
+
+        cbor_encode_text_stringz(&credenrialMap, "type");
+        cbor_encode_text_stringz(&credenrialMap, "public-key");
+
+        cbor_encoder_close_container(&map, &credenrialMap);
+
+        // user: PublicKeyCredentialUserEntity (0x04)
+        cbor_encode_uint(&map, 0x04);
+        CborEncoder userMap;
+        cbor_encoder_create_map(&map, &userMap, 1);
+
+        cbor_encode_text_stringz(&userMap, "id");
+        cbor_encode_byte_string(&userMap, credential.value().userId.data(), credential.value().userId.size());
+
+        cbor_encoder_close_container(&map, &userMap);
+    }
+
+    // authData: byte string (0x02)
+    cbor_encode_uint(&map, 0x02);
+    cbor_encode_byte_string(&map, authData.data(), authData.size());
+
+    // signature: byte string (0x03)
+    cbor_encode_uint(&map, 0x03);
+    cbor_encode_byte_string(&map, signature.data(), signature.size());
+
+    // numberOfCredentials: unsigned 32 bit integer (0x05)
+    if(numberOfCredentials > 1) {
+        cbor_encode_uint(&map, 0x05);
+        cbor_encode_uint(&map, numberOfCredentials);
+    }
+
+    cbor_encoder_close_container(&encoder, &map);
+
+    size_t len = cbor_encoder_get_buffer_size(&encoder, buf);
+    std::vector<uint8_t> out;
+    out.push_back(0x00);
     out.insert(out.end(), buf, buf + len);
     return out;
 }

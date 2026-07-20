@@ -19,7 +19,7 @@
 #include <vector>
 
 void CredentialStore::init() {
-    storeKey_ = get_or_create_store_key(); 
+    storeKey_ = get_or_create_store_key();
     // std::cout << "storeKey_: ";
     // for (auto byte : storeKey_) {
     //     std::cout << std::format("{:02x}", byte);
@@ -63,14 +63,14 @@ std::vector<uint8_t> CredentialStore::decrypt(std::vector<uint8_t> &ciphertext) 
     EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, 12, nullptr);
     EVP_DecryptInit_ex(ctx, nullptr, nullptr, storeKey_.data(), iv);
     EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, 16, (void *)tag);
-    
+
     std::vector<uint8_t> plain(ctlen);
     int outl = 0;
     EVP_DecryptUpdate(ctx, plain.data(), &outl, cipher, ctlen);
     int finlen = 0;
     if(!EVP_DecryptFinal_ex(ctx, plain.data() + outl, &finlen)) throw std::runtime_error("GCM auth tag mismatch!");
     EVP_CIPHER_CTX_free(ctx);
-   
+
     // if(finlen <= 0) throw std::runtime_error("GCM auth tag mismatch!");
     plain.resize(outl + finlen);
     return plain;
@@ -134,10 +134,10 @@ void CredentialStore::load() {
 
     std::ifstream f(CRED_STORE_PATH, std::ios::binary);
     std::vector<uint8_t> enc_blob(
-            (std::istreambuf_iterator<char>(f)), 
+            (std::istreambuf_iterator<char>(f)),
             std::istreambuf_iterator<char>()
     );
-    auto plain = decrypt(enc_blob); 
+    auto plain = decrypt(enc_blob);
     json j = json::parse(plain.begin(), plain.end());
 
     for(const auto &entry : j) {
@@ -145,7 +145,7 @@ void CredentialStore::load() {
         cred.id = fromHex(entry["id"].get<std::string>());
         cred.rpId = entry["rpId"].get<std::string>();
         cred.userId = fromHex(entry["userId"].get<std::string>());
-        cred.alg = entry["alg"].get<int>();    
+        cred.alg = entry["alg"].get<int>();
         cred.signCount = entry["signCount"].get<uint32_t>();
         cred.public_blob = entry["public_blob"].get<std::vector<uint8_t>>();
         cred.private_blob = entry["private_blob"].get<std::vector<uint8_t>>();
@@ -166,7 +166,7 @@ void CredentialStore::put(const StoredCredential &cred) {
 
 
 const StoredCredential& CredentialStore::get_by_credId(const std::vector<uint8_t> &credId) const {
-    return stored_.at(toHex(credId)); 
+    return stored_.at(toHex(credId));
 }
 
 const std::unordered_map<std::string, StoredCredential> CredentialStore::get_all_creds() const

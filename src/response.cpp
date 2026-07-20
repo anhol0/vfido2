@@ -180,10 +180,17 @@ std::optional<CTAPPacket> respond(UHIDReport &r) {
                     return make_err(CTAPError::CTAP2_ERR_INVALID_CBOR, r.cid);
                 }
 
-                // For now working on the logic to handle the request
-                // so returning that there are no credentials
-                return make_err(CTAPError::CTAP2_ERR_NO_CREDENTIALS, r.cid);
-
+                if(payload.size() == 1) {
+                    std::cout << "Build single-byte payload\n";
+                    return make_err(static_cast<CTAPError>(payload[0]), r.cid);
+                }
+                // Print payload contents for debugging purposes
+                printf("\x1b[1;33mauthenticatorGetAssertion response payload size is: %lu\n", payload.size());
+                printf("Payload: ");
+                for(int i = 0; i < payload.size(); i++) {
+                    printf("%02x", payload[i]);
+                }
+                printf("\n\x1b[0m");
             }
             packet.cid = r.cid;
             packet.cmd = CTAPHID_CBOR | MASK;
