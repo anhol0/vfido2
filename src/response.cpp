@@ -132,12 +132,6 @@ std::optional<CTAPPacket> respond(UHIDReport &r) {
                     return make_err(CTAPError::CTAP2_ERR_INVALID_CBOR, r.cid);
                 }
 
-                // Idk how to handle when packet arrives with make.me.blink Relying Party ID
-                // Returning empty response to avoid further processing
-                if(mcr.rp.id == "make.me.blink") {
-                    return {};
-                }
-
                 // Building the response
                 try {
                     payload = mcr.build_response(r);

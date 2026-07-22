@@ -64,7 +64,7 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(UHIDReport &r) {
 
     // Flags
     uint8_t flags = 0x00;
-    flags |= (uint8_t)options["up"] << 0;
+    flags |= 0x01; // Explicitly assert User Presence (UP = 1)
     // flags |= (uint8_t)options["uv"] << 2;
     flags |= 1 << 6;
     int sc = 0;
@@ -104,7 +104,10 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(UHIDReport &r) {
     credential.private_blob = key.privateBlob;
     credential.public_blob = key.publicBlob;
 
-    store.put(credential);
+    // Do not save dummy credentials to the store if it's a make.me.blink ping
+    if (rp.id != "make.me.blink") {
+        store.put(credential);
+    }
 
     // Doing scheiße
     auto extracted_coords = extractPublic(key.publicBlob);
