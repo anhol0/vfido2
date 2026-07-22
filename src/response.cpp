@@ -1,5 +1,7 @@
+#include <exception>
 #include <iostream>
 #include <cstdint>
+#include <vector>
 #include "response.hpp"
 #include "error.hpp"
 #include "credentials/credential.hpp"
@@ -69,6 +71,24 @@ std::vector<std::vector<uint8_t>> CTAPPacket::stringify() {
     return out;
 }
 
+void print_packet(std::string method, std::vector<uint8_t> &payload) {
+    std::cout << "\x1b[1;33m" << method << " payload size is: " << payload.size() << "\n";
+    std::cout << "Payload: ";
+    for(int i = 0; i < payload.size(); i++) {
+        printf("%02x", payload[i]);
+    }
+    std::cout << "\n\x1b[0m";
+}
+
+void print_response_payload(std::string method, std::vector<uint8_t> &payload) {
+    std::cout << "\x1b[1;33m" << method << " response payload size is: " << payload.size() << "\n";
+    std::cout << "Payload: ";
+    for(int i = 0; i < payload.size(); i++) {
+        printf("%02x", payload[i]);
+    }
+    std::cout << "\n\x1b[0m";
+}
+
 std::optional<CTAPPacket> respond(UHIDReport &r) {
     CTAPPacket packet;
     switch(r.cmd) {
@@ -104,26 +124,21 @@ std::optional<CTAPPacket> respond(UHIDReport &r) {
             break;
         }
         case CTAPHID_CBOR: {
+            const uint8_t command = r.payload[0];
             std::vector<uint8_t> payload;
             // Payload generation
-            if(r.payload[0] == 0x04) {              // authenticatorGetInfo
+            if(command == 0x04) {              // authenticatorGetInfo
                 // CBOR
                 auto cbor = build_getinfo_response();
                 // Encoding JSON in CBOR
                 payload.insert(payload.end(), cbor.begin(), cbor.end());
             }
 
-            else if(r.payload[0] == 0x01) {       // authenticatorMakeCredential
+            else if(command == 0x01) {       // authenticatorMakeCredential
                 payload.insert(payload.end(), r.payload.begin() + 1, r.payload.end());
 
                 // Debugging payload reassembly
-                printf("\x1b[1;33mauthenticatorMakeCredential payload size is: %lu\n", payload.size());
-                printf("Payload: ");
-                for(int i = 0; i < payload.size(); i++) {
-                    printf("%02x", payload[i]);
-                }
-                printf("\n\x1b[0m");
-                //
+                print_packet("authenticatorMakeCredential", payload);
 
                 // Parsing the request
                 CTAPMakeCredentialRequest mcr;
@@ -148,43 +163,54 @@ std::optional<CTAPPacket> respond(UHIDReport &r) {
                 }
             }
 
-            else if(r.payload[0] == 0x02) {          // authenticatorGetAssertion
-                std::cout << "Got authenticatorGetAssertion command\n";
+            else if(command == 0x02 || command == 0x08) {          // authenticatorGetAssertion
                 payload.insert(payload.end(), r.payload.begin() + 1, r.payload.end());
 
-                // Print payload contents for debugging purposes
-                printf("\x1b[1;33mauthenticatorGetAssertion payload size is: %lu\n", payload.size());
-                printf("Payload: ");
-                for(int i = 0; i < payload.size(); i++) {
-                    printf("%02x", payload[i]);
+                if(command == 0x02) {
+                    print_packet("authenticatorGetAssertion", payload);
+                } else if(command == 0x08) {
+                    print_packet("authenticatorGetNextAssertion", payload);
                 }
-                printf("\n\x1b[0m");
 
                 // Parse the authenticatorGetAssertion request
-                CTAPGetAssertionRequest gar;
-                if(!gar.parseRequest(payload)) {
-                    std::cerr << "There is a problem with the authenticatorGetAssertion request\n";
-                    return make_err(CTAPError::CTAP2_ERR_INVALID_CBOR, r.cid);
+
+                static CTAPGetAssertionRequest gar;
+                if(command == 0x02) {
+                    gar.clear();
+                    if(!gar.parseRequest(payload)) {
+                        gar.clear();
+                        std::cerr << "There is a problem with the authenticatorGetAssertion request\n";
+                        return make_err(CTAPError::CTAP2_ERR_INVALID_CBOR, r.cid);
+                    }
                 }
 
-                try {
-                    payload = gar.build_response(r);
-                } catch (const std::exception& e) {
-                    std::cerr << "Error building response: " << e.what() << "\n";
-                    return make_err(CTAPError::CTAP2_ERR_INVALID_CBOR, r.cid);
+                if(command == 0x02) {
+                    try {
+                        payload = gar.build_response(r);
+                    } catch (const std::exception& e) {
+                        std::cerr << "Error building response: " << e.what() << "\n";
+                        return make_err(CTAPError::CTAP2_ERR_INVALID_CBOR, r.cid);
+                    }
+                } else if(command == 0x08) {
+                    try {
+                        payload = gar.build_response_next();
+                    } catch (const std::exception &e) {
+                        std::cerr << "Error building next response: " << e.what() << "\n";
+                        return make_err(CTAPError::CTAP2_ERR_INVALID_CBOR, r.cid);
+                    }
                 }
 
                 if(payload.size() == 1) {
                     std::cout << "Build single-byte payload\n";
                     return make_err(static_cast<CTAPError>(payload[0]), r.cid);
                 }
+
                 // Print payload contents for debugging purposes
-                printf("\x1b[1;33mauthenticatorGetAssertion response payload size is: %lu\n", payload.size());
-                printf("Payload: ");
-                for(int i = 0; i < payload.size(); i++) {
-                    printf("%02x", payload[i]);
+                if(command == 0x02) {
+                    print_response_payload("authenticatorGetAssertion", payload);
+                } else if(command == 0x08) {
+                    print_response_payload("authenticatorGetNextAssertion", payload);
                 }
-                printf("\n\x1b[0m");
             }
             packet.cid = r.cid;
             packet.cmd = CTAPHID_CBOR | MASK;

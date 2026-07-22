@@ -41,11 +41,11 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(UHIDReport &r) {
     }
 
     // For now, since User Verification is not yet supported
-    for(auto [name, option] : options) {
-        if(name == "uv" && option == true) {
-            return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_UNSUPPORTED_OPTION)};
-        }
-    }
+    // for(auto [name, option] : options) {
+        // if(name == "uv" && option == true) {
+            // return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_UNSUPPORTED_OPTION)};
+        // }
+    // }
 
     // Work with pinAuth parameter
 
@@ -65,8 +65,8 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(UHIDReport &r) {
     // Flags
     uint8_t flags = 0x00;
     flags |= 0x01; // Explicitly assert User Presence (UP = 1)
-    // flags |= (uint8_t)options["uv"] << 2;
-    flags |= 1 << 6;
+    flags |= 0x01 << 2; // User verification (UV = 1)
+    flags |= 1 << 6; // Attested Credential Data
     int sc = 0;
 
     // Building Attested Credential data
@@ -105,7 +105,7 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(UHIDReport &r) {
     credential.public_blob = key.publicBlob;
 
     // Do not save dummy credentials to the store if it's a make.me.blink ping
-    if (rp.id != "make.me.blink") {
+    if (rp.id != "make.me.blink" && rp.id != ".dummy") {
         store.put(credential);
     }
 

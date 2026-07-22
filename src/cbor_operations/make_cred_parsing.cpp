@@ -1,6 +1,5 @@
 #include "registration/registration.hpp"
 #include <iostream>
-#include <array>
 #include <cstdint>
 #include <cstring>
 #include <sys/types.h>
@@ -43,7 +42,7 @@ bool CTAPMakeCredentialRequest::parse_rp(CborValue &map) {
             std::printf("Error calculating key length\n");
             return false;
         }
-    
+
         std::vector<char> subkey(keyLen + 1);
 
         cbor_value_copy_text_string(&rpMap, subkey.data(), &keyLen, &rpMap);
@@ -62,8 +61,10 @@ bool CTAPMakeCredentialRequest::parse_rp(CborValue &map) {
 
         if(strkey == "id") {
             rp.id.assign(str.data(), len);
+            std::cout << "RP ID = " << rp.id << "\n";
         } else if(strkey == "name") {
             rp.name.assign(str.data(), len);
+            std::cout << "RP NAME = " << rp.name << "\n";
         } else {
             std::cerr << "Incorrect ID in Relying Party map: " << strkey << ", skipping\n";
             cbor_value_advance(&rpMap);
@@ -87,7 +88,7 @@ bool CTAPMakeCredentialRequest::parse_user(CborValue &map) {
         CborError err = cbor_value_calculate_string_length(&userMap, &keyLen);
         if(err != CborNoError) {
              std::printf("Error calculating key length\n");
-            return false;           
+            return false;
         }
 
         std::vector<char> subkey(keyLen + 1);
@@ -103,7 +104,7 @@ bool CTAPMakeCredentialRequest::parse_user(CborValue &map) {
         std::cout << "Data len: " << len << "\n";
         if(err != CborNoError) {
              std::printf("Error calculating value length\n");
-            return false;           
+            return false;
         }
 
         if(strkey == "id") {
@@ -133,7 +134,7 @@ bool CTAPMakeCredentialRequest::parse_user(CborValue &map) {
 bool CTAPMakeCredentialRequest::parse_pubkey_params(CborValue &map) {
     CborValue arr;
     cbor_value_enter_container(&map, &arr);
-    
+
     while(!cbor_value_at_end(&arr)) {
         CborValue item;
         cbor_value_enter_container(&arr, &item);
@@ -145,9 +146,9 @@ bool CTAPMakeCredentialRequest::parse_pubkey_params(CborValue &map) {
             CborError err = cbor_value_calculate_string_length(&item, &keyLen);
             if(err != CborNoError) {
                  std::printf("Error calculating key length\n");
-                return false;           
+                return false;
             }
-            
+
             std::vector<char> subkey(keyLen + 1);
 
             cbor_value_copy_text_string(&item, subkey.data(), &keyLen, &item);
@@ -161,9 +162,9 @@ bool CTAPMakeCredentialRequest::parse_pubkey_params(CborValue &map) {
 
                 if(err != CborNoError) {
                      std::printf("Error calculating key length\n");
-                    return false;           
+                    return false;
                 }
-                
+
                 std::vector<char> type(len + 1);
 
                 cbor_value_copy_text_string(&item, type.data(), &len, &item);
@@ -188,7 +189,7 @@ bool CTAPMakeCredentialRequest::parse_pubkey_params(CborValue &map) {
 bool CTAPMakeCredentialRequest::parse_exclude_list(CborValue &map) {
     CborValue arr;
     cbor_value_enter_container(&map, &arr);
-    
+
     while(!cbor_value_at_end(&arr)) {
         CborValue item;
         cbor_value_enter_container(&arr, &item);
@@ -200,9 +201,9 @@ bool CTAPMakeCredentialRequest::parse_exclude_list(CborValue &map) {
             CborError err = cbor_value_calculate_string_length(&item, &keyLen);
             if(err != CborNoError) {
                  std::printf("Error calculating key length\n");
-                return false;           
+                return false;
             }
-            
+
             std::vector<char> subkey(keyLen + 1);
 
             cbor_value_copy_text_string(&item, subkey.data(), &keyLen, &item);
@@ -216,9 +217,9 @@ bool CTAPMakeCredentialRequest::parse_exclude_list(CborValue &map) {
 
                 if(err != CborNoError) {
                      std::printf("Error calculating key length\n");
-                    return false;           
+                    return false;
                 }
-                
+
                 std::vector<char> type(len + 1);
 
                 cbor_value_copy_text_string(&item, type.data(), &len, &item);
@@ -228,7 +229,7 @@ bool CTAPMakeCredentialRequest::parse_exclude_list(CborValue &map) {
                 CborError err = cbor_value_calculate_string_length(&item, &len);
                 if(err != CborNoError) {
                      std::printf("Error calculating key length\n");
-                    return false;           
+                    return false;
                 }
                 std::vector<uint8_t> id_buf(len);
                 cbor_value_copy_byte_string(&item, id_buf.data(), &len, &item);
@@ -245,10 +246,10 @@ bool CTAPMakeCredentialRequest::parse_exclude_list(CborValue &map) {
                         std::cerr << "Error parsing exclude list transport options";
                         return false;
                     }
-                    
+
                     std::vector<char> string(tlen + 1);
                     cbor_value_copy_text_string(&transport, string.data(), &tlen, &transport);
-                    d.transports.push_back(std::string(string.data(), tlen)); 
+                    d.transports.push_back(std::string(string.data(), tlen));
                 }
                 cbor_value_leave_container(&item, &transport);
             } else {
