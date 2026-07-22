@@ -110,6 +110,8 @@ void CredentialStore::save() {
             {"id", toHex(cred.id)},
             {"rpId", cred.rpId},
             {"userId", toHex(cred.userId)},
+            {"userName", cred.userName},
+            {"userDisplayName", cred.userDisplayName},
             {"alg", cred.alg},
             {"signCount", cred.signCount},
             {"private_blob", cred.private_blob},
@@ -145,6 +147,8 @@ void CredentialStore::load() {
         cred.id = fromHex(entry["id"].get<std::string>());
         cred.rpId = entry["rpId"].get<std::string>();
         cred.userId = fromHex(entry["userId"].get<std::string>());
+        cred.userName = entry["userName"].get<std::string>();
+        cred.userDisplayName = entry["userDisplayName"].get<std::string>();
         cred.alg = entry["alg"].get<int>();
         cred.signCount = entry["signCount"].get<uint32_t>();
         cred.public_blob = entry["public_blob"].get<std::vector<uint8_t>>();

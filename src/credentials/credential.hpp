@@ -20,6 +20,8 @@ typedef struct StoredCredential {
     std::vector<uint8_t> id;
     std::string rpId;
     std::vector<uint8_t> userId;
+    std::string userName;
+    std::string userDisplayName;
     int32_t alg;
     uint32_t signCount;
     std::vector<uint8_t> private_blob;
