@@ -1,5 +1,6 @@
 #include <cstdint>
 #include <openssl/obj_mac.h>
+#include <string>
 #include <sys/types.h>
 #include <tss2/tss2_esys.h>
 #include <vector>
@@ -14,6 +15,11 @@
 #include "const.hpp"
 #include "uhid_report.hpp"
 #include "cryptography/tpm.hpp"
+#include "uv/src/auth.hpp"
+
+#ifdef DEBUG
+#include <iostream>
+#endif
 
 extern CredentialStore store;
 
@@ -40,14 +46,36 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(UHIDReport &r) {
         return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_UNSUPPORTED_ALGORITHM)};
     }
 
-    // For now, since User Verification is not yet supported
-    // for(auto [name, option] : options) {
-        // if(name == "uv" && option == true) {
-            // return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_UNSUPPORTED_OPTION)};
-        // }
-    // }
+    // User Verification
+    // Not cryptographically secure, but fine for now
+    for(auto [name, option] : options) {
 
-    // Work with pinAuth parameter
+        #ifdef DEBUG
+            std::cout << name << ": " << option << std::endl;
+        #endif
+
+        if(name == "uv" && option == true) {
+            const std::string username = get_user_name();
+            const std::string procname = "vfido";
+
+            #ifdef DEBUG
+                #pragma message("Compiling with DEBUG mode ON - Using local config path")
+                const std::string confdir = "../config";
+            #else
+                const std::string confdir = "/etc/vfido2/config";
+            #endif
+
+            int rc = authenticate_user(username, procname, confdir);
+            if(rc != 0) {
+                return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_UV_BLOCKED)};
+            } else { break; }
+        } else if (name == "uv" && option == false) {
+            bool consent = collect_consent("Authorize passkey creation?");
+            if(!consent) {
+                return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_OPERATION_DENIED)};
+            } else { break; }
+        }
+    }
 
     // End work with pinAuth parameter
     // Authentication Data is a blob:

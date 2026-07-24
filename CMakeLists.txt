@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(SOURCE_DIR src)
 
+add_subdirectory(${SOURCE_DIR}/uv)
 
 add_executable(${PN}
     # Uncategorized
@@ -31,6 +32,10 @@ add_executable(${PN}
     ${SOURCE_DIR}/cbor_operations/get_assertion_parsing.cpp
 )
 
+target_compile_definitions(${PN} PRIVATE
+    $<$<CONFIG:Debug>:DEBUG>
+)
+
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(TINYCBOR REQUIRED tinycbor)
 pkg_check_modules(OPENSSL REQUIRED openssl)
@@ -52,4 +57,5 @@ target_link_libraries(${PN} PRIVATE
     ${TSS2_ESYS_LIBRARIES}
     ${TSS2_RC_LIBRARIES}
     ${TSS2_MU_LIBRARIES}
+    uv
 )

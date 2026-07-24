@@ -368,6 +368,7 @@ bool CTAPMakeCredentialRequest::parse_options(CborValue &map) {
             cbor_value_advance(&optMap);
         }
     }
+    std::cout << "Options parsing successful!\n";
     cbor_value_leave_container(&map, &optMap);
     return true;
 }
