@@ -363,6 +363,9 @@ bool CTAPMakeCredentialRequest::parse_options(CborValue &map) {
             cbor_value_get_boolean(&optMap, &value);
             cbor_value_advance_fixed(&optMap);
             options[strkey] = value;
+            #ifdef DEBUG
+            std::cout << "Known option found: " << strkey << ": " << value << std::endl;
+            #endif
         } else {
             std::cerr << "Unknown option for Option map!\n";
             cbor_value_advance(&optMap);

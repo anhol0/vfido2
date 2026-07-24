@@ -84,6 +84,11 @@ class CTAPMakeCredentialRequest {
             rp.clear();
             user.clear();
             publicKeyCredParams.clear();
+            options = {
+                {"rk", false},
+                {"uv", false},
+                {"up", true}
+            };
             excludeList.clear();
             extensions.clear();
         }

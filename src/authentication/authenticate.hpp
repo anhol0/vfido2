@@ -50,7 +50,11 @@ public:
         clientDataHash.resize(0);
         allowList.clear();
         extensions.clear();
-        options.clear();
+        options = {
+            {"rk", false},
+            {"uv", false},
+            {"up", true}
+        };
         pinAuth.clear();
         pinProtocol = 0;
         cache.clear();

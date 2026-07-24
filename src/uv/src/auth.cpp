@@ -2,6 +2,7 @@
 #include <iostream>
 #include <security/_pam_types.h>
 #include <security/pam_appl.h>
+#include <sys/wait.h>
 #include <stdlib.h>
 #include <string>
 #include <string.h>
@@ -85,21 +86,19 @@ int authenticate_user(
     return rc;
 }
 
-bool collect_consent(std::string question) {
-    // Construct the zenity command.
-    // --question creates the Yes/No dialog.
-    // 2>/dev/null hides GTK warnings that zenity sometimes dumps to stderr.
-    std::string command;
-    sprintf(command.data(), "zenity --question "
-                            "--text=\"%s\" "
-                            "2>/dev/null", question.c_str());
+bool collect_consent(const std::string question) {
+    pid_t pid = fork();
+    if (pid < 0) return false;
 
-    // std::system executes the command via the shell (/bin/sh -c)
-    int exitCode = std::system(command.c_str());
+    if (pid == 0) {
+        std::string arg = "--text=" + question;
+        execlp("zenity", "zenity", "--question", arg.c_str(), (char*)nullptr);
+        _exit(127); // exec failed
+    }
 
-    // In POSIX, std::system returns the wait status.
-    // A return value of 0 means the command executed successfully and returned 0 (Yes).
-    return (exitCode == 0);
+    int status;
+    waitpid(pid, &status, 0);
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
 std::string get_user_name() {
