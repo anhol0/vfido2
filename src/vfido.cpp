@@ -3,6 +3,10 @@
 
 #include "device.hpp"
 #include "event.hpp"
+#include "credential.hpp"
+
+extern FIDODevice device;
+extern CredentialStore store;
 
 int main() {
     device.init();

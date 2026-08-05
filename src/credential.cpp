@@ -7,6 +7,8 @@
 #include <fstream>
 #include <ios>
 #include <iterator>
+#include <iostream>
+// #include <format>
 #include <nlohmann/detail/value_t.hpp>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
@@ -17,8 +19,13 @@
 #include <vector>
 
 void CredentialStore::init() {
-   storeKey_ = get_or_create_store_key(); 
-   load();
+    storeKey_ = get_or_create_store_key(); 
+    // std::cout << "storeKey_: ";
+    // for (auto byte : storeKey_) {
+    //     std::cout << std::format("{:02x}", byte);
+    // }
+    // std::cout << "\n";
+    load();
 }
 
 // Hex conversions
@@ -61,10 +68,10 @@ std::vector<uint8_t> CredentialStore::decrypt(std::vector<uint8_t> &ciphertext) 
     int outl = 0;
     EVP_DecryptUpdate(ctx, plain.data(), &outl, cipher, ctlen);
     int finlen = 0;
-    EVP_DecryptFinal_ex(ctx, plain.data() + outl, &finlen);
+    if(!EVP_DecryptFinal_ex(ctx, plain.data() + outl, &finlen)) throw std::runtime_error("GCM auth tag mismatch!");
     EVP_CIPHER_CTX_free(ctx);
-    
-    if(finlen <= 0) throw std::runtime_error("GCM auth tag mismatch!");
+   
+    // if(finlen <= 0) throw std::runtime_error("GCM auth tag mismatch!");
     plain.resize(outl + finlen);
     return plain;
 }
@@ -104,7 +111,9 @@ void CredentialStore::save() {
             {"rpId", cred.rpId},
             {"userId", toHex(cred.userId)},
             {"alg", cred.alg},
-            {"signCount", cred.signCount}
+            {"signCount", cred.signCount},
+            {"private_blob", cred.private_blob},
+            {"public_blob", cred.public_blob}
         });
     }
     std::string plaintext = j.dump();
@@ -138,6 +147,9 @@ void CredentialStore::load() {
         cred.userId = fromHex(entry["userId"].get<std::string>());
         cred.alg = entry["alg"].get<int>();    
         cred.signCount = entry["signCount"].get<uint32_t>();
+        cred.public_blob = entry["public_blob"].get<std::vector<uint8_t>>();
+        cred.private_blob = entry["private_blob"].get<std::vector<uint8_t>>();
+        stored_[toHex(cred.id)] = cred;
     }
 }
 

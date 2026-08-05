@@ -1,5 +1,6 @@
 #include "device.hpp"
 #include "error.hpp"
+#include "response.hpp"
 #include "uhid_report.hpp"
 #include <cstdint>
 #include <linux/uhid.h>
@@ -79,17 +80,13 @@ std::vector<uint8_t> FIDODevice::get_data() {
      return std::vector<uint8_t>(ev.u.output.data, ev.u.output.data+ev.u.output.size);
 }
 
-void FIDODevice::send_err(CTAPError error, uint32_t cid) {
+CTAPPacket make_err(CTAPError error, uint32_t cid) {
     CTAPPacket err_p;
-    err_p.cmd = CTAPHID_ERROR;
+    err_p.cmd = CTAPHID_CBOR | MASK;
     err_p.len = 1;
     err_p.cid = cid;
     err_p.payload.push_back(static_cast<uint8_t>(error));
-    // Sendind err response
-    auto resp = make_response(err_p);
-    for(auto &r : resp) {
-        send(r);
-    }    
+    return err_p;    
 }
 
 std::vector<uhid_event> make_response(UHIDReport &report) {

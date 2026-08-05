@@ -22,7 +22,6 @@ public:
     void init();
     bool get();
     bool send(struct uhid_event &resp); 
-    void send_err(CTAPError err, uint32_t cid);
     uint32_t get_type();
     std::vector<uint8_t> get_data();
 private:
@@ -33,5 +32,6 @@ private:
 
 std::vector<uhid_event> make_response(UHIDReport &report); 
 std::vector<uhid_event> make_response(CTAPPacket &packet);
+CTAPPacket make_err(CTAPError err, uint32_t cid);
 
 #endif

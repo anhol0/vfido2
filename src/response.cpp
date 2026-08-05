@@ -2,10 +2,14 @@
 #include <cstdint>
 #include "response.hpp"
 #include "error.hpp"
-#include "event.hpp"
+#include "credential.hpp"
+#include "device.hpp"
 #include "uhid_report.hpp"
 #include "cbor.hpp"
 #include "registration.hpp"
+
+extern FIDODevice device;
+extern CredentialStore store;
 
 uint32_t gen_cid() {
     uint32_t cid;
@@ -43,7 +47,7 @@ std::vector<std::vector<uint8_t>> CTAPPacket::stringify() {
             std::vector<uint8_t> v;
             v.insert(v.end(), channel_id.begin(), channel_id.end());
             v.push_back(sequence);
-            while(v.size() <= 64) {
+            while(v.size() < 64) {
                 if(i < payload.size()) {
                     v.push_back(payload[i++]);
                 } else {
@@ -122,10 +126,17 @@ CTAPPacket respond(UHIDReport &r) {
                 CTAPMakeCredentialRequest mcr;
                 if(!mcr.parseRequest(payload)) {
                     std::cerr << "There is a problem with the MCR request\n";
-                    // send_failure(CTAP_ERR_SMTH);
-                    device.send_err(CTAPError::CTAP2_ERR_INVALID_CBOR, r.cid);
-                    return {};
-                } 
+                    return make_err(CTAPError::CTAP2_ERR_INVALID_CBOR, r.cid);
+                }
+
+                payload = mcr.build_response(r);
+                if(payload.size() == 1) {
+                    std::cout << "Error while building response\n";
+                    return make_err(static_cast<CTAPError>(payload[0]), r.cid);
+                }
+            } else if(r.payload[0] == 0x02) {
+                std::cout << "Got authenticatorGetAssertion command\n";
+                return make_err(CTAPError::CTAP2_ERR_NO_CREDENTIALS, r.cid);
             }
             packet.cid = r.cid;
             packet.cmd = CTAPHID_CBOR | MASK;
@@ -140,7 +151,7 @@ CTAPPacket respond(UHIDReport &r) {
         case CTAPHID_LOCK:
         case CTAPHID_ERROR:
             break;
-    }
+    } 
     return packet;
 }
 

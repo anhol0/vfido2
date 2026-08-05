@@ -31,7 +31,6 @@ bool CTAPMakeCredentialRequest::parseRequest(
         if(key < dispatch_table.size() && dispatch_table[key]) {
             if(!(this->*dispatch_table[key])(map))
                 return false; 
-            // Process further
         } else {
             std::cerr << "Unknown key in authenticatorMakeCredential map\n";
             cbor_value_advance(&map);
