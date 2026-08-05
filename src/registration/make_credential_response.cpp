@@ -93,7 +93,7 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(UHIDReport &r) {
 
     // Generating the keypair and storing the credential
     TpmCtx tpm;
-    ESYS_TR primary = create_primary(tpm.ctx);
+    TpmLocalHandle primary = get_primary(tpm.ctx);
     CredentialKey key = create_credential_key(tpm.ctx, primary);
     StoredCredential credential;
     credential.id = credId;
@@ -112,9 +112,5 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(UHIDReport &r) {
     authData.insert(authData.end(), cose_map.begin(), cose_map.end());
 
     std::vector<uint8_t> payload = build_authenticatorMakeCredential_response(authData);
-
-    // Flushing everything to prevent memory leaks
-    Esys_FlushContext(tpm.ctx, primary);
-
     return payload;
 }

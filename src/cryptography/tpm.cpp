@@ -18,28 +18,27 @@
 
 namespace {
     bool nv_index_exists(ESYS_CONTEXT *ctx) {
-        ESYS_TR nvHandle = ESYS_TR_NONE;
+        TpmLocalHandle nvHandle(ctx);
         TSS2_RC rc = Esys_TR_FromTPMPublic(
                 ctx,
                 STORE_KEY_NV_INDEX,
                 ESYS_TR_NONE, ESYS_TR_NONE, ESYS_TR_NONE,
-                &nvHandle
+                nvHandle.ptr()
         );
         if(rc != TSS2_RC_SUCCESS)
             return false;
 
         //Checking if index has actually been written
-        TPM2B_NV_PUBLIC *nvPublic = nullptr;
-        TPM2B_NAME *nvName = nullptr;
-        rc = Esys_NV_ReadPublic(ctx, nvHandle, ESYS_TR_NONE, ESYS_TR_NONE, ESYS_TR_NONE, &nvPublic, &nvName);
+
+        TPM2B_NV_PUBLIC *nvPublicRaw = nullptr;
+        TPM2B_NAME *nvNameRaw = nullptr;
+        rc = Esys_NV_ReadPublic(ctx, nvHandle, ESYS_TR_NONE, ESYS_TR_NONE, ESYS_TR_NONE, &nvPublicRaw, &nvNameRaw);
         if(rc != TSS2_RC_SUCCESS) {
-            Esys_Free(nvPublic);
-            Esys_Free(nvName);
             return false;
         }
+        EsysUniquePtr<TPM2B_NV_PUBLIC> nvPublic(nvPublicRaw);
+        EsysUniquePtr<TPM2B_NAME> nvName(nvNameRaw);
         bool written = (nvPublic->nvPublic.attributes & TPMA_NV_WRITTEN) != 0;
-        Esys_Free(nvPublic);
-        Esys_Free(nvName);
         return written;
     }
 
@@ -49,7 +48,9 @@ namespace {
         if(rc != TSS2_RC_SUCCESS) {
             return;
         }
+        TpmLocalHandle nvGuard(ctx, nvHandle);
         Esys_NV_UndefineSpace(ctx, ESYS_TR_RH_OWNER, nvHandle, ESYS_TR_PASSWORD, ESYS_TR_NONE, ESYS_TR_NONE);
+        // nvGuard will take care about freeing memory allocated for the handle
     }
 
     void nv_create_and_write_key(ESYS_CONTEXT *ctx, std::vector<uint8_t> &key) {
@@ -80,16 +81,8 @@ namespace {
             throw std::runtime_error("NV_DefineSpace failed: " + std::string(Tss2_RC_Decode(rc)));
         }
 
-        // Getting a handle to a index
-        rc = Esys_TR_FromTPMPublic(
-                ctx,
-                STORE_KEY_NV_INDEX,
-                ESYS_TR_NONE, ESYS_TR_NONE, ESYS_TR_NONE,
-                &nvHandle
-        );
-        if(rc != TSS2_RC_SUCCESS) {
-            throw std::runtime_error("TR_FromTPMPublic failed after define!");
-        }
+        TpmLocalHandle nvHandleGuard(ctx, nvHandle);
+
         // Writing key bytes
         TPM2B_MAX_NV_BUFFER nvData = {};
         nvData.size = STORE_KEY_SIZE;
@@ -97,7 +90,7 @@ namespace {
         rc = Esys_NV_Write(
                 ctx,
                 ESYS_TR_RH_OWNER,
-                nvHandle,
+                nvHandleGuard,
                 ESYS_TR_PASSWORD, ESYS_TR_NONE, ESYS_TR_NONE,
                 &nvData,
                 0
@@ -105,6 +98,7 @@ namespace {
         if(rc != TSS2_RC_SUCCESS) {
             throw std::runtime_error("NV_Write failed: " + std::string(Tss2_RC_Decode(rc)));
         }
+        // Deallocation of nvHandle will be taken care of by nvHandleGuard
     }
 
     // Read existing NV index
@@ -115,69 +109,40 @@ namespace {
                 ESYS_TR_NONE, ESYS_TR_NONE, ESYS_TR_NONE,
                 &nvHandle
         );
-        if(rc != TSS2_RC_SUCCESS) {
-            throw std::runtime_error("TR_FromTPMPublic failed on read");
-        }
-        TPM2B_MAX_NV_BUFFER *nvData = nullptr;
+        if(rc != TSS2_RC_SUCCESS) throw std::runtime_error("TR_FromTPMPublic failed on read");
+        TpmLocalHandle nvHandleGuard(ctx, nvHandle);
+
+        TPM2B_MAX_NV_BUFFER *nvDataRaw = nullptr;
         rc = Esys_NV_Read(
                 ctx,
                 ESYS_TR_RH_OWNER,
-                nvHandle,
+                nvHandleGuard.get(),
                 ESYS_TR_PASSWORD, ESYS_TR_NONE, ESYS_TR_NONE,
                 STORE_KEY_SIZE,
                 0,
-                &nvData
+                &nvDataRaw
         );
         if(rc != TSS2_RC_SUCCESS) {
             throw std::runtime_error("NV_Read failed: " + std::string(Tss2_RC_Decode(rc)));
         }
+        EsysUniquePtr<TPM2B_MAX_NV_BUFFER> nvData(nvDataRaw);
         std::vector<uint8_t> key(nvData->buffer, nvData->buffer + nvData->size);
-        Esys_Free(nvData);
         return key;
     }
 }
 
-ESYS_TR create_primary(ESYS_CONTEXT *ctx) {
-    TPM2B_PUBLIC tmpl = {};
-    auto &t = tmpl.publicArea;
-    t.type = TPM2_ALG_ECC;
-    t.nameAlg = TPM2_ALG_SHA256;
-    t.objectAttributes = TPMA_OBJECT_RESTRICTED          |
-                         TPMA_OBJECT_DECRYPT             |  // storage/parent key = DECRYPT
-                         TPMA_OBJECT_FIXEDTPM            |
-                         TPMA_OBJECT_FIXEDPARENT         |
-                         TPMA_OBJECT_SENSITIVEDATAORIGIN |
-                         TPMA_OBJECT_USERWITHAUTH;
-    t.parameters.eccDetail.symmetric.algorithm = TPM2_ALG_AES;
-    t.parameters.eccDetail.symmetric.keyBits.aes = 128;
-    t.parameters.eccDetail.symmetric.mode.aes = TPM2_ALG_CFB;
-    t.parameters.eccDetail.scheme.scheme = TPM2_ALG_NULL;
-    t.parameters.eccDetail.curveID = TPM2_ECC_NIST_P256;
-    t.parameters.eccDetail.kdf.scheme = TPM2_ALG_NULL;
-
-    TPM2B_SENSITIVE_CREATE sens = {};
-    TPM2B_DATA outsideInfo = {};
-    TPML_PCR_SELECTION pcrsel = {};
-    ESYS_TR handle = {};
-    TPM2B_PUBLIC *outPub = nullptr;
-    TSS2_RC rc = Esys_CreatePrimary(
-            ctx,
-            ESYS_TR_RH_OWNER,
-            ESYS_TR_PASSWORD, ESYS_TR_NONE, ESYS_TR_NONE,
-            &sens, &tmpl,
-            &outsideInfo, &pcrsel,
-            &handle,
-            &outPub,
-            nullptr, nullptr, nullptr
+TpmLocalHandle get_primary(ESYS_CONTEXT *ctx) {
+    ESYS_TR primaryHandle = ESYS_TR_NONE;
+    TSS2_RC rc = Esys_TR_FromTPMPublic(
+        ctx,
+        0x81000001, // Well-known persistent SRK handle
+        ESYS_TR_NONE, ESYS_TR_NONE, ESYS_TR_NONE,
+        &primaryHandle
     );
-
-    Esys_Free(outPub);
-
-    if(rc != TSS2_RC_SUCCESS) {
-        throw std::runtime_error("CreatePrimary failed: " + std::string(Tss2_RC_Decode(rc)));
+    if (rc != TSS2_RC_SUCCESS) {
+        throw std::runtime_error("Failed to load persistent SRK handle: " + std::string(Tss2_RC_Decode(rc)));
     }
-
-    return handle; // Caller must do Esys_FlushContext when done
+    return TpmLocalHandle(ctx, primaryHandle);
 }
 
 std::vector<uint8_t> get_or_create_store_key() {
@@ -185,13 +150,13 @@ std::vector<uint8_t> get_or_create_store_key() {
 
     if(!nv_index_exists(tpm.ctx)) {
         nv_index_undefine(tpm.ctx);
-        TPM2B_DIGEST *randBytes = nullptr;
-        TSS2_RC rc = Esys_GetRandom(tpm.ctx, ESYS_TR_NONE, ESYS_TR_NONE, ESYS_TR_NONE, STORE_KEY_SIZE, &randBytes);
+        TPM2B_DIGEST *randBytesRaw = nullptr;
+        TSS2_RC rc = Esys_GetRandom(tpm.ctx, ESYS_TR_NONE, ESYS_TR_NONE, ESYS_TR_NONE, STORE_KEY_SIZE, &randBytesRaw);
         if(rc != TSS2_RC_SUCCESS) {
             throw std::runtime_error("Esys_GetRandom failed!");
         }
+        EsysUniquePtr<TPM2B_DIGEST> randBytes(randBytesRaw);
         std::vector<uint8_t> key(randBytes->buffer, randBytes->buffer + randBytes->size);
-        Esys_Free(randBytes);
         nv_create_and_write_key(tpm.ctx, key);
         return key;
     }
@@ -221,9 +186,9 @@ CredentialKey create_credential_key(ESYS_CONTEXT *ctx, ESYS_TR primaryHandle) {
     size_t offset = 0;
     Tss2_MU_TPMT_PUBLIC_Marshal(&tmpt, tmplBuffer.buffer, sizeof(tmplBuffer.buffer), &offset);
     tmplBuffer.size = (uint16_t)offset;
-    ESYS_TR keyHandle = ESYS_TR_NONE;
-    TPM2B_PUBLIC *outPublic = nullptr;
-    TPM2B_PRIVATE *outPrivate = nullptr;
+    TpmTransistentHandle keyHandle(ctx);
+    TPM2B_PUBLIC *outPublicRaw = nullptr;
+    TPM2B_PRIVATE *outPrivateRaw = nullptr;
 
     TPM2B_SENSITIVE_CREATE sens = {};
     TSS2_RC rc = Esys_CreateLoaded(
@@ -232,16 +197,17 @@ CredentialKey create_credential_key(ESYS_CONTEXT *ctx, ESYS_TR primaryHandle) {
             ESYS_TR_PASSWORD, ESYS_TR_NONE, ESYS_TR_NONE,
             &sens,
             &tmplBuffer,
-            &keyHandle,
-            &outPrivate,
-            &outPublic
+            keyHandle.ptr(),
+            &outPrivateRaw,
+            &outPublicRaw
     );
 
     if(rc != TSS2_RC_SUCCESS) {
-        Esys_Free(outPublic);
-        Esys_Free(outPrivate);
         throw std::runtime_error("CreateLoaded failed: " + std::string(Tss2_RC_Decode(rc)));
     }
+
+    EsysUniquePtr<TPM2B_PUBLIC> outPublic(outPublicRaw);
+    EsysUniquePtr<TPM2B_PRIVATE> outPrivate(outPrivateRaw);
 
 
     CredentialKey result;
@@ -252,25 +218,18 @@ CredentialKey create_credential_key(ESYS_CONTEXT *ctx, ESYS_TR primaryHandle) {
 
     // Serializing public area
     offset = 0;
-    rc = Tss2_MU_TPM2B_PUBLIC_Marshal(outPublic, public_blob.data(), public_blob.size(), &offset);
+    rc = Tss2_MU_TPM2B_PUBLIC_Marshal(outPublic.get(), public_blob.data(), public_blob.size(), &offset);
     if(rc != TSS2_RC_SUCCESS) {
-        Esys_Free(outPublic);
-        Esys_Free(outPrivate);
         throw std::runtime_error("Failed to serialize public data: " + std::string(Tss2_RC_Decode(rc)));
     }
 
     // Serializing private area
     offset = 0;
-    rc = Tss2_MU_TPM2B_PRIVATE_Marshal(outPrivate, private_blob.data(), private_blob.size(), &offset);
+    rc = Tss2_MU_TPM2B_PRIVATE_Marshal(outPrivate.get(), private_blob.data(), private_blob.size(), &offset);
     if(rc != TSS2_RC_SUCCESS) {
-        Esys_Free(outPublic);
-        Esys_Free(outPrivate);
         throw std::runtime_error("Failed to serialize private data: " + std::string(Tss2_RC_Decode(rc)));
     }
 
-    Esys_Free(outPrivate);
-    Esys_Free(outPublic);
-    Esys_FlushContext(ctx, keyHandle);
     result.publicBlob = public_blob;
     result.privateBlob = private_blob;
     return  result;
@@ -295,19 +254,22 @@ std::array<std::vector<uint8_t>, 2> extractPublic(std::vector<uint8_t> &pubBlob)
     };
 }
 
-std::vector<uint8_t> sign(std::vector<uint8_t> &data, std::vector<uint8_t> &publicBlob, std::vector<uint8_t> &privateBlob) {
+std::vector<uint8_t> sign
+(
+    ESYS_CONTEXT *ctx,
+    ESYS_TR primaryHandle,
+    std::vector<uint8_t> &data,
+    std::vector<uint8_t> &publicBlob,
+    std::vector<uint8_t> &privateBlob
+) {
     TPM2B_DIGEST digest = {};
     digest.size = data.size();
     std::copy(data.begin(), data.end(), digest.buffer);
+
     TPMT_SIG_SCHEME inScheme = {
         .scheme = TPM2_ALG_ECDSA,
-        .details = {
-            .ecdsa = {
-                .hashAlg = TPM2_ALG_SHA256,
-            }
-        }
+        .details = {.ecdsa = {.hashAlg = TPM2_ALG_SHA256}}
     };
-    TpmCtx tpmCtx;
 
     // Unmarshal the private blob
     TPM2B_PRIVATE inPrivate = {};
@@ -319,21 +281,19 @@ std::vector<uint8_t> sign(std::vector<uint8_t> &data, std::vector<uint8_t> &publ
     offset = 0;
     Tss2_MU_TPM2B_PUBLIC_Unmarshal(publicBlob.data(), publicBlob.size(), &offset, &inPublic);
 
-    // Creating the primary handle
-    auto primaryHandle = create_primary(tpmCtx.ctx);
-
     // Generating the key handle
-    ESYS_TR keyHandle = ESYS_TR_NONE;
+    // ESYS_TR keyHandle = ESYS_TR_NONE;
+    TpmTransistentHandle keyHandle(ctx);
     TSS2_RC rc = Esys_Load(
-        tpmCtx.ctx,
+        ctx,
         primaryHandle,
         ESYS_TR_PASSWORD, ESYS_TR_NONE, ESYS_TR_NONE,
         &inPrivate,
         &inPublic,
-        &keyHandle
+        keyHandle.ptr()
     );
     if (rc != TSS2_RC_SUCCESS) {
-        throw std::runtime_error("Esys_Load failed: " + std::to_string(rc));
+        throw std::runtime_error("Esys_Load failed: " + std::string(Tss2_RC_Decode(rc)));
     }
 
     TPMT_TK_HASHCHECK validation = {
@@ -341,19 +301,21 @@ std::vector<uint8_t> sign(std::vector<uint8_t> &data, std::vector<uint8_t> &publ
         .hierarchy = TPM2_RH_NULL,
         .digest = {0}
     };
-    TPMT_SIGNATURE *signature = nullptr;
+    TPMT_SIGNATURE *signatureRaw = nullptr;
     rc = Esys_Sign(
-        tpmCtx.ctx,
+        ctx,
         keyHandle,
         ESYS_TR_PASSWORD, ESYS_TR_NONE, ESYS_TR_NONE,
         &digest,
         &inScheme,
         &validation,
-        &signature
+        &signatureRaw
     );
     if (rc != TSS2_RC_SUCCESS) {
         throw std::runtime_error("Esys_Sign failed: " + std::to_string(rc));
     }
+    // Managing signature object using unique_ptr
+    EsysUniquePtr<TPMT_SIGNATURE> signature(signatureRaw);
 
     // Encoding into ASN.1 DER format
     ECDSA_SIG *ecdsaSignature = ECDSA_SIG_new();
@@ -366,8 +328,7 @@ std::vector<uint8_t> sign(std::vector<uint8_t> &data, std::vector<uint8_t> &publ
     uint8_t* p = der_signature.data();
     i2d_ECDSA_SIG(ecdsaSignature, &p);
     ECDSA_SIG_free(ecdsaSignature);
-    Esys_Free(signature);
-    Esys_FlushContext(tpmCtx.ctx, primaryHandle);
-    Esys_FlushContext(tpmCtx.ctx, keyHandle);
+
+    // RAII Guards automatically free pointers and calling Esys_FlushContext
     return der_signature;
 }
