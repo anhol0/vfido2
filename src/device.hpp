@@ -4,16 +4,13 @@
 #include "uhid_report.hpp"
 #include "response.hpp"
 #include <array>
-#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <linux/uhid.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <cerrno>
-#include <string.h>
 #include <unistd.h>
-#include <stdexcept>
 #include <vector>
 
 class FIDODevice {
@@ -25,7 +22,7 @@ public:
     uint32_t get_type();
     std::vector<uint8_t> get_data();
 private:
-    size_t fd;
+    int fd;
     struct uhid_event ev;
     const std::array<uint8_t, 34> fido_report_desc;
 };
@@ -53,73 +50,8 @@ inline FIDODevice::FIDODevice() :
         0xC0                     // End Collection
 }}{}
 
-void inline FIDODevice::init() {
-    fd = open("/dev/uhid", O_RDWR);
-    if (fd < 0) {
-        perror("open /dev/uhid");
-        std::runtime_error("Error opening /dev/uhid");
-    }
 
-    memset(&ev, 0, sizeof(ev));
-
-    // Device creation event
-    ev.type = UHID_CREATE2;
-
-    memcpy(ev.u.create2.rd_data, fido_report_desc.data(), fido_report_desc.size());
-    ev.u.create2.rd_size = fido_report_desc.size();
-
-    ev.u.create2.bus = BUS_USB;
-    ev.u.create2.vendor = 0x1234;
-    ev.u.create2.product = 0x5678;
-
-    int n = write(fd, &ev, sizeof(ev));
-    if(n < 0) {
-        perror("write to /dev/uhid");
-        std::runtime_error("Error writing to /dev/uhid");
-    }
-}
-
-inline bool FIDODevice::get() {  
-    ssize_t n = read(fd, &ev, sizeof(ev));
-    if(n <= 0) 
-        return false; 
-    return true;
-}
-
-inline bool FIDODevice::send(struct uhid_event &resp) {
-    int n = write(fd, &resp, sizeof(resp));
-    if(n <= 0)
-        return false;
-    return true;
-}
-
-inline uint32_t FIDODevice::get_type() {
-    return ev.type;
-}
-
-inline std::vector<uint8_t> FIDODevice::get_data() {
-     return std::vector<uint8_t>(ev.u.output.data, ev.u.output.data+ev.u.output.size);
-}
-
-inline uhid_event make_response(UHIDReport &report) {
-    struct uhid_event resp;
-    memset(&resp, 0, sizeof(resp));
-    resp.type = UHID_INPUT2; 
-    CTAPPacket frame = respond(report);
-    std::vector<uint8_t> response = frame.stringify();
-    memcpy(resp.u.input2.data, response.data(), response.size());
-    resp.u.input2.size = response.size(); 
-    return resp;
-}
-
-inline uhid_event make_response(CTAPPacket &packet) {
-    struct uhid_event resp;
-    memset(&resp, 0, sizeof(resp));
-    resp.type = UHID_INPUT2; 
-    std::vector<uint8_t> response = packet.stringify();
-    memcpy(resp.u.input2.data, response.data(), response.size());
-    resp.u.input2.size = response.size(); 
-    return resp;   
-}
+std::vector<uhid_event> make_response(UHIDReport &report); 
+std::vector<uhid_event> make_response(CTAPPacket &packet);
 
 #endif

@@ -79,10 +79,11 @@ int main() {
                     err_p.len = 1;
                     err_p.cid = report.cid;
                     err_p.payload.push_back(ERR_INVALID_SEQ);
-                    err_p.stringify();
                     // Sendind err response
-                    struct uhid_event resp = make_response(err_p);
-                    device.send(resp);
+                    auto resp = make_response(err_p);
+                    for(auto &r : resp) {
+                        device.send(r);
+                    }
                     report.clear();
                     continue;
                 }
@@ -101,8 +102,10 @@ int main() {
 
             if(respd) {
                 // Respond based on the CMD 
-                struct uhid_event resp = make_response(report);
-                device.send(resp);
+                auto resp = make_response(report);
+                for(auto &r : resp) {
+                    device.send(r);
+                }
                 report.clear();
                 report.seq = 0;
             }
