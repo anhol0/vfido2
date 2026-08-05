@@ -5,20 +5,21 @@ project(${PN} CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(SOURCE_DIR src)
 
 
 add_executable(${PN}
-    src/${PN}.cpp
-    src/event.cpp
-    src/response.cpp
-    src/registration.cpp
-    src/make_cred_parsing.cpp
-    src/make_authmakecred_response.cpp
-    src/device.cpp
-    src/crypto.cpp
-    src/cbor.cpp
-    src/credential.cpp
-    src/tpm.cpp
+    ${SOURCE_DIR}/${PN}.cpp
+    ${SOURCE_DIR}/event.cpp
+    ${SOURCE_DIR}/response.cpp
+    ${SOURCE_DIR}/device.cpp
+    ${SOURCE_DIR}/cbor.cpp
+    ${SOURCE_DIR}/registration/registration.cpp
+    ${SOURCE_DIR}/registration/make_cred_parsing.cpp
+    ${SOURCE_DIR}/registration/make_authmakecred_response.cpp
+    ${SOURCE_DIR}/credentials/credential.cpp
+    ${SOURCE_DIR}/cryptography/crypto.cpp
+    ${SOURCE_DIR}/cryptography/tpm.cpp
 )
 
 find_package(PkgConfig REQUIRED)
@@ -27,6 +28,7 @@ pkg_check_modules(OPENSSL REQUIRED openssl)
 pkg_check_modules(TSS2_ESYS REQUIRED tss2-esys)
 pkg_check_modules(TSS2_RC REQUIRED tss2-rc)
 pkg_check_modules(TSS2_MU REQUIRED tss2-mu)
+target_include_directories(${PN} PRIVATE ${SOURCE_DIR})
 target_include_directories(${PN} PRIVATE
     ${TINYCBOR_INCLUDE_DIRS}
     ${OPENSSL_INCLUDE_DIRS}

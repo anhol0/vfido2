@@ -1,5 +1,6 @@
 #pragma once
 
+
 #include <cstdint>
 
 enum class CTAPError : uint8_t {

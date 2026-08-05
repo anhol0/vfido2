@@ -42,6 +42,8 @@ void FIDODevice::init() {
     ev.type = UHID_CREATE2;
 
     memcpy(ev.u.create2.rd_data, fido_report_desc.data(), fido_report_desc.size());
+    strncpy((char*)ev.u.create.name, "vFIDO2-Keyring", sizeof(ev.u.create.name) - 1);
+
     ev.u.create2.rd_size = fido_report_desc.size();
 
     ev.u.create2.bus = BUS_USB;
@@ -89,8 +91,12 @@ CTAPPacket make_err(CTAPError error, uint32_t cid) {
     return err_p;    
 }
 
-std::vector<uhid_event> make_response(UHIDReport &report) {
-    CTAPPacket frame = respond(report);
+std::optional<std::vector<uhid_event>> make_response(UHIDReport &report) {
+    auto f = respond(report);
+    if(!f.has_value()) {
+        return {};
+    }
+    auto frame = f.value();
     auto responses = frame.stringify();
     std::vector<uhid_event> packets;
     for(const auto &response : responses) {

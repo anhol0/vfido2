@@ -114,7 +114,8 @@ std::vector<uint8_t> build_cose_key(
     for (auto byte : y_pad) {
         std::cout << std::format("{:02x}", byte);
     }
-    std::cout << std::endl;    cbor_encode_byte_string(&map, y_pad.data(), y_pad.size());
+    std::cout << std::endl;    
+    cbor_encode_byte_string(&map, y_pad.data(), y_pad.size());
 
     e = cbor_encoder_close_container(&encoder, &map);
     if(e != CborNoError)

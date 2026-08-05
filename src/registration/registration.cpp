@@ -1,4 +1,4 @@
-#include "registration.hpp"
+#include "registration/registration.hpp"
 #include <cstddef>
 #include <iostream>
 #include <tinycbor/cbor.h>

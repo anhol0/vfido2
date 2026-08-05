@@ -1,4 +1,4 @@
-#include "registration.hpp"
+#include "registration/registration.hpp"
 #include <iostream>
 #include <array>
 #include <cstdint>

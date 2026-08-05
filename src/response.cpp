@@ -2,11 +2,11 @@
 #include <cstdint>
 #include "response.hpp"
 #include "error.hpp"
-#include "credential.hpp"
+#include "credentials/credential.hpp"
 #include "device.hpp"
 #include "uhid_report.hpp"
 #include "cbor.hpp"
-#include "registration.hpp"
+#include "registration/registration.hpp"
 
 extern FIDODevice device;
 extern CredentialStore store;
@@ -69,7 +69,7 @@ std::vector<std::vector<uint8_t>> CTAPPacket::stringify() {
     return out; 
 }
 
-CTAPPacket respond(UHIDReport &r) {
+std::optional<CTAPPacket> respond(UHIDReport &r) {
     CTAPPacket packet;
     switch(r.cmd) {
         case CTAPHID_INIT: {
@@ -106,16 +106,18 @@ CTAPPacket respond(UHIDReport &r) {
         case CTAPHID_CBOR: {
             std::vector<uint8_t> payload;
             // Payload generation 
-            if(r.payload[0] == 0x04) {
+            if(r.payload[0] == 0x04) {              // authenticatorGetInfo
                 // CBOR 
                 auto cbor = build_getinfo_response();
                 // Encoding JSON in CBOR
                 payload.insert(payload.end(), cbor.begin(), cbor.end());
-            } else if(r.payload[0] == 0x01) {
+            } 
+            
+            else if(r.payload[0] == 0x01) {       // authenticatorMakeCredential
                 payload.insert(payload.end(), r.payload.begin() + 1, r.payload.end());
 
                 // Debugging payload reassembly
-                printf("\x1b[1;33mPayload size is: %lu\n", payload.size());
+                printf("\x1b[1;33mauthenticatorMakeCredential payload size is: %lu\n", payload.size());
                 printf("Payload: ");
                 for(int i = 0; i < payload.size(); i++) {
                     printf("%02x", payload[i]);
@@ -128,15 +130,27 @@ CTAPPacket respond(UHIDReport &r) {
                     std::cerr << "There is a problem with the MCR request\n";
                     return make_err(CTAPError::CTAP2_ERR_INVALID_CBOR, r.cid);
                 }
-
+                if(mcr.rp.id == "make.me.blink") {
+                    return {};
+                }
                 payload = mcr.build_response(r);
                 if(payload.size() == 1) {
-                    std::cout << "Error while building response\n";
+                    std::cout << "Build single-byte payload\n";
                     return make_err(static_cast<CTAPError>(payload[0]), r.cid);
                 }
-            } else if(r.payload[0] == 0x02) {
+            } 
+            
+            else if(r.payload[0] == 0x02) {          // authenticatorGetAssertion
                 std::cout << "Got authenticatorGetAssertion command\n";
                 return make_err(CTAPError::CTAP2_ERR_NO_CREDENTIALS, r.cid);
+                payload.insert(payload.end(), r.payload.begin(), r.payload.end());
+                
+                printf("\x1b[1;33mauthenticatorGetAssertion payload size is: %lu\n", payload.size());
+                printf("Payload: ");
+                for(int i = 0; i < payload.size(); i++) {
+                    printf("%02x", payload[i]);
+                }
+                printf("\n\x1b[0m");
             }
             packet.cid = r.cid;
             packet.cmd = CTAPHID_CBOR | MASK;

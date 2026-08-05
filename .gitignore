@@ -1,4 +1,6 @@
 .cache
 *.cbor
+.vscode/
 vfido_session
 build/
+compile_commands.json
