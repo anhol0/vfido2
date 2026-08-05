@@ -8,9 +8,14 @@
 #include <vector>
 
 bool CTAPMakeCredentialRequest::parse_client_data_hash(CborValue &map) {
-    size_t len = clientDataHash.size();
-
-    CborError err = cbor_value_copy_byte_string(&map, clientDataHash.data(), &len, &map);
+    size_t len;
+    CborError err = cbor_value_calculate_string_length(&map, &len);
+    if (err != CborNoError) {
+        std::cerr << "Failed to calculate client_data_hash length\n";
+        return false;
+    }
+    clientDataHash.resize(len);
+    err = cbor_value_copy_byte_string(&map, clientDataHash.data(), &len, &map);
 
     if(err != CborNoError) {
         std::cerr << "Failed to parse clientDataHash\n";
