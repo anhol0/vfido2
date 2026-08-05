@@ -39,8 +39,3 @@ bool CTAPGetAssertionRequest::parseRequest(std::vector<uint8_t> &payload) {
     std::cout << "authenticatorGetAssertion parsing successful!\n";
     return true;
 }
-
-std::vector<uint8_t> CTAPGetAssertionRequest::build_response(UHIDReport &r)
-{
-    return std::vector<uint8_t>();
-}

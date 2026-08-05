@@ -41,6 +41,16 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(UHIDReport &r) {
         return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_UNSUPPORTED_ALGORITHM)};   
     }
 
+    // For now, since User Verification is not yet supported
+    for(auto [name, option] : options) {
+        if(name == "uv" && option == true) {
+            return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_UNSUPPORTED_OPTION)};
+        }
+    }
+
+    // Work with pinAuth parameter
+
+    // End work with pinAuth parameter
     // Authentication Data is a blob:
     // rpIdHash (32 bytes)
     // flags (1 byte)
@@ -55,10 +65,10 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(UHIDReport &r) {
 
     // Flags 
     uint8_t flags = 0x00;
-    flags |= 1 << 0;
+    flags |= (uint8_t)options["up"] << 0;
     // flags |= (uint8_t)options["uv"] << 2;
     flags |= 1 << 6;
-    int sc = store.signCounter++;
+    int sc = 0;
 
     // Building Attested Credential data
     std::vector<uint8_t> authData;
@@ -82,6 +92,7 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(UHIDReport &r) {
     authData.push_back(credIdLenBytes[1]);
     authData.insert(authData.end(), credId.begin(), credId.end());
 
+    // Generating the keypair and storing the credential
     TpmCtx tpm;
     ESYS_TR primary = create_primary(tpm.ctx); 
     CredentialKey key = create_credential_key(tpm.ctx, primary);

@@ -38,12 +38,12 @@ class CredentialStore {
         void incrementSigCount(const std::vector<uint8_t> &credId);
         std::string toHex(const std::vector<uint8_t> &v) const;
         std::vector<uint8_t> fromHex(const std::string &s);
-        int signCounter = 0;
-
-    private:
+        
+        private:
         std::vector<uint8_t> decrypt(std::vector<uint8_t> &ciphertext);
         std::vector<uint8_t> encrypt(std::vector<uint8_t> &plaintext);
         std::unordered_map<std::string, StoredCredential> stored_;
         std::vector<uint8_t> storeKey_;
+        int signCounter = 0;
 };
 
