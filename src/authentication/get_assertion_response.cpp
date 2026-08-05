@@ -40,14 +40,7 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(UHIDReport &r)
 
 
     // No auth part for now
-
-    // Processing options parameters
-    // For now, since User Verification is not yet supported
-    // for(auto [name, option] : options) {
-        // if(name == "uv" && option == true) {
-            // return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_UNSUPPORTED_OPTION)};
-        // }
-    // }
+    // We just fake it for now, will add in the future
 
     // We do not support extensions
     // Like, at all

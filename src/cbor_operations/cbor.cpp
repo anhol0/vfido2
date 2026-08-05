@@ -193,16 +193,6 @@ std::vector<uint8_t> build_authenticatorGetAssertion_response(
         cbor_encode_text_stringz(&credenrialMap, "public-key");
 
         cbor_encoder_close_container(&map, &credenrialMap);
-
-        // user: PublicKeyCredentialUserEntity (0x04)
-        cbor_encode_uint(&map, 0x04);
-        CborEncoder userMap;
-        cbor_encoder_create_map(&map, &userMap, 1);
-
-        cbor_encode_text_stringz(&userMap, "id");
-        cbor_encode_byte_string(&userMap, credential.value().userId.data(), credential.value().userId.size());
-
-        cbor_encoder_close_container(&map, &userMap);
     }
 
     // authData: byte string (0x02)
@@ -212,6 +202,24 @@ std::vector<uint8_t> build_authenticatorGetAssertion_response(
     // signature: byte string (0x03)
     cbor_encode_uint(&map, 0x03);
     cbor_encode_byte_string(&map, signature.data(), signature.size());
+
+    if(credential.has_value()) {
+        // user: PublicKeyCredentialUserEntity (0x04)
+        cbor_encode_uint(&map, 0x04);
+        CborEncoder userMap;
+        cbor_encoder_create_map(&map, &userMap, 3);
+
+        cbor_encode_text_stringz(&userMap, "id");
+        cbor_encode_byte_string(&userMap, credential.value().userId.data(), credential.value().userId.size());
+
+        cbor_encode_text_stringz(&userMap, "name");
+        cbor_encode_text_stringz(&userMap, credential.value().userName.c_str());
+
+        cbor_encode_text_stringz(&userMap, "displayName");
+        cbor_encode_text_stringz(&userMap, credential.value().userDisplayName.c_str());
+
+        cbor_encoder_close_container(&map, &userMap);
+    }
 
     // numberOfCredentials: unsigned 32 bit integer (0x05)
     if(numberOfCredentials > 1) {

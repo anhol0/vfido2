@@ -100,6 +100,8 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(UHIDReport &r) {
     credential.rpId = rp.id;
     credential.signCount = 0;
     credential.userId = user.id;
+    credential.userName = user.name;
+    credential.userDisplayName = user.displayName;
     credential.alg = selected_alg;
     credential.private_blob = key.privateBlob;
     credential.public_blob = key.publicBlob;
