@@ -1,3 +1,4 @@
+#include "cancellation.hpp"
 #include <cstdio>
 #include <iostream>
 #include <security/_pam_types.h>
@@ -9,6 +10,7 @@
 #include <termios.h>
 #include <unistd.h>
 #include <stdint.h>
+#include <stop_token>
 
 struct conv_data_t {
     std::string password;
@@ -68,11 +70,13 @@ static int myapp_conv(int num_msg, const struct pam_message **msg, struct pam_re
 int authenticate_user(
     const std::string &username,
     const std::string &process_name,
-    const std::string &confdir
+    const std::string &confdir,
+    std::stop_token stop
 ) {
     pam_handle_t *pamh = NULL;
     conv_data_t data {};
     struct pam_conv conv = { &myapp_conv, &data };
+    cancellation_point(stop);
     int rc = pam_start_confdir(process_name.c_str(), username.c_str(), &conv, confdir.c_str(), &pamh);
     if(rc != PAM_SUCCESS) {
         std::cout << "Incorrect config path or user name!\n";
@@ -103,6 +107,9 @@ bool collect_consent(const std::string question) {
 
 std::string get_user_name() {
     char *name = getlogin();
+    if(!name) {
+        return "dummy";
+    }
     size_t len = strlen(name);
     return std::string(name, len);
 }

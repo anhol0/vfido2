@@ -11,6 +11,7 @@ std::vector<uint8_t> build_authenticatorMakeCredential_response(std::vector<uint
 std::vector<uint8_t> build_authenticatorGetAssertion_response(
         std::vector<uint8_t> &authData,
         std::vector<uint8_t> &signature,
+        bool uv,
         std::optional<StoredCredential> credential = std::nullopt,
-        uint32_t numberOfCredentials = 1
+        std::optional<uint32_t> numberOfCredentials = std::nullopt
 );

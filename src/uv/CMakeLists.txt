@@ -14,6 +14,9 @@ add_library(${PN}
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(PAM REQUIRED pam)
 target_include_directories(${PN} PUBLIC ${PAM_INCLUDE_DIRS})
+target_include_directories(uv PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/..
+)
 target_compile_options(${PN} PRIVATE -g)
 target_link_libraries(${PN} PRIVATE
     ${PAM_LIBRARIES}

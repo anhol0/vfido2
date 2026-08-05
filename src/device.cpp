@@ -1,13 +1,15 @@
 #include "device.hpp"
+#include "cancellation.hpp"
 #include "error.hpp"
 #include "response.hpp"
 #include "uhid_report.hpp"
 #include <cstdint>
 #include <linux/uhid.h>
 #include <stdexcept>
+#include <stop_token>
 #include <unistd.h>
 
-FIDODevice::FIDODevice() : 
+FIDODevice::FIDODevice() :
     fido_report_desc{{
         0x06, 0xD0, 0xF1,        // Usage Page (FIDO 0xF1D0)
         0x09, 0x01,              // Usage (U2F HID Authenticator Device)
@@ -57,13 +59,14 @@ void FIDODevice::init() {
 }
 
 FIDODevice::~FIDODevice() {
-    close(fd);
+    if(fd >= 0)
+        close(fd);
 }
 
-bool FIDODevice::get() {  
+bool FIDODevice::get() {
     ssize_t n = read(fd, &ev, sizeof(ev));
-    if(n <= 0) 
-        return false; 
+    if(n <= 0)
+        return false;
     return true;
 }
 
@@ -74,6 +77,10 @@ bool FIDODevice::send(struct uhid_event &resp) {
     return true;
 }
 
+int FIDODevice::native_handle() const noexcept {
+    return fd;
+}
+
 uint32_t FIDODevice::get_type() {
     return ev.type;
 }
@@ -82,44 +89,41 @@ std::vector<uint8_t> FIDODevice::get_data() {
      return std::vector<uint8_t>(ev.u.output.data, ev.u.output.data+ev.u.output.size);
 }
 
-CTAPPacket make_err(CTAPError error, uint32_t cid) {
-    CTAPPacket err_p;
-    err_p.cmd = CTAPHID_CBOR | MASK;
-    err_p.len = 1;
-    err_p.cid = cid;
-    err_p.payload.push_back(static_cast<uint8_t>(error));
-    return err_p;    
+CTAPPacket make_cbor_error(uint32_t cid, CTAPError error)
+{
+    CTAPPacket packet;
+    packet.cid = cid;
+    packet.cmd = CTAPHID_CBOR | MASK;
+    packet.payload = {static_cast<uint8_t>(error)};
+    packet.len = packet.payload.size();
+    return packet;
 }
 
-std::optional<std::vector<uhid_event>> make_response(UHIDReport &report) {
-    auto f = respond(report);
-    if(!f.has_value()) {
-        return {};
-    }
-    auto frame = f.value();
-    auto responses = frame.stringify();
-    std::vector<uhid_event> packets;
-    for(const auto &response : responses) {
-        struct uhid_event resp;
-        memset(&resp, 0, sizeof(resp));
-        resp.type = UHID_INPUT2; 
-        memcpy(resp.u.input2.data, response.data(), response.size());
-        resp.u.input2.size = response.size();
-        packets.push_back(resp);
-    }
-    return packets;
+CTAPPacket make_hid_error(uint32_t cid, HIDError error)
+{
+    CTAPPacket packet;
+    packet.cid = cid;
+    packet.cmd = CTAPHID_ERROR | MASK;
+    packet.payload = {static_cast<uint8_t>(error)};
+    packet.len = packet.payload.size();
+    return packet;
 }
 
-std::vector<uhid_event> make_response(CTAPPacket &packet) {
+CTAPPacket execute_ctap_request(UHIDReport report, std::stop_token stop) {
+    cancellation_point(stop);
+    return handle_cbor(report, stop);
+}
+
+std::vector<uhid_event> frame_packet(CTAPPacket &packet) {
     auto responses = packet.stringify();
     std::vector<uhid_event> packets;
     for(const auto &response : responses) {
         struct uhid_event resp;
         memset(&resp, 0, sizeof(resp));
-        resp.type = UHID_INPUT2; 
+        resp.type = UHID_INPUT2;
         memcpy(resp.u.input2.data, response.data(), response.size());
-        resp.u.input2.size = response.size(); 
+        resp.u.input2.size = response.size();
         packets.push_back(resp);
     }
-    return packets;   
+    return packets;
 }

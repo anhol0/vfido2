@@ -8,11 +8,6 @@ enum class CTAPError : uint8_t {
     CTAP1_ERR_INVALID_COMMAND            = 0x01,
     CTAP1_ERR_INVALID_PARAMETER          = 0x02,
     CTAP1_ERR_INVALID_LENGTH             = 0x03,
-    CTAP1_ERR_INVALID_SEQ                = 0x04,
-    CTAP1_ERR_TIMEOUT                    = 0x05,
-    CTAP1_ERR_CHANNEL_BUSY               = 0x06,
-    CTAP1_ERR_LOCK_REQUIRED              = 0x0A,
-    CTAP1_ERR_INVALID_CHANNEL            = 0x0B,
 
     CTAP2_ERR_CBOR_UNEXPECTED_TYPE       = 0x11,
     CTAP2_ERR_INVALID_CBOR               = 0x12,
@@ -62,4 +57,15 @@ enum class CTAPError : uint8_t {
     CTAP2_ERR_EXTENSION_LAST             = 0xEF,
     CTAP2_ERR_VENDOR_FIRST               = 0xF0,
     CTAP2_ERR_VENDOR_LAST                = 0xFF
+};
+
+enum class HIDError : uint8_t {
+    CTAP1_ERR_INVALID_COMMAND            = 0x01,
+    CTAP1_ERR_INVALID_PARAMETER          = 0x02,
+    CTAP1_ERR_INVALID_LENGTH             = 0x03,
+    CTAP1_ERR_INVALID_SEQ                = 0x04,
+    CTAP1_ERR_TIMEOUT                    = 0x05,
+    CTAP1_ERR_CHANNEL_BUSY               = 0x06,
+    CTAP1_ERR_LOCK_REQUIRED              = 0x0A,
+    CTAP1_ERR_INVALID_CHANNEL            = 0x0B,
 };

@@ -164,8 +164,9 @@ std::vector<uint8_t> build_authenticatorMakeCredential_response(std::vector<uint
 std::vector<uint8_t> build_authenticatorGetAssertion_response(
         std::vector<uint8_t> &authData,
         std::vector<uint8_t> &signature,
+        bool uv,
         std::optional<StoredCredential> credential,
-        uint32_t numberOfCredentials
+        std::optional<uint32_t> numberOfCredentials
 ) {
     uint8_t buf[2048];
     CborEncoder encoder;
@@ -175,10 +176,12 @@ std::vector<uint8_t> build_authenticatorGetAssertion_response(
     // If the allowList has exactly 1 credential in it, we can omit credential field completely
     // This allows map to be 2 fields in size
     // Otherwize, map size is 3
-    size_t mapSize = credential.has_value() ? 4 : 2;
-    if(numberOfCredentials > 1) {
+
+    size_t mapSize = 2;
+    if(credential) ++mapSize;
+    if(credential) ++mapSize;
+    if(numberOfCredentials.has_value() && numberOfCredentials.value())
         mapSize++;
-    }
 
     cbor_encoder_create_map(&encoder, &map, mapSize);
     if(credential.has_value()) {
@@ -203,28 +206,34 @@ std::vector<uint8_t> build_authenticatorGetAssertion_response(
     cbor_encode_uint(&map, 0x03);
     cbor_encode_byte_string(&map, signature.data(), signature.size());
 
+
     if(credential.has_value()) {
         // user: PublicKeyCredentialUserEntity (0x04)
         cbor_encode_uint(&map, 0x04);
         CborEncoder userMap;
-        cbor_encoder_create_map(&map, &userMap, 3);
+        if(uv)
+            cbor_encoder_create_map(&map, &userMap, 3);
+        else
+            cbor_encoder_create_map(&map, &userMap, 1);
 
         cbor_encode_text_stringz(&userMap, "id");
         cbor_encode_byte_string(&userMap, credential.value().userId.data(), credential.value().userId.size());
 
-        cbor_encode_text_stringz(&userMap, "name");
-        cbor_encode_text_stringz(&userMap, credential.value().userName.c_str());
+        if(uv) {
+            cbor_encode_text_stringz(&userMap, "name");
+            cbor_encode_text_stringz(&userMap, credential.value().userName.c_str());
 
-        cbor_encode_text_stringz(&userMap, "displayName");
-        cbor_encode_text_stringz(&userMap, credential.value().userDisplayName.c_str());
+            cbor_encode_text_stringz(&userMap, "displayName");
+            cbor_encode_text_stringz(&userMap, credential.value().userDisplayName.c_str());
+        }
 
         cbor_encoder_close_container(&map, &userMap);
     }
 
     // numberOfCredentials: unsigned 32 bit integer (0x05)
-    if(numberOfCredentials > 1) {
+    if(numberOfCredentials.has_value()) {
         cbor_encode_uint(&map, 0x05);
-        cbor_encode_uint(&map, numberOfCredentials);
+        cbor_encode_uint(&map, numberOfCredentials.value());
     }
 
     cbor_encoder_close_container(&encoder, &map);

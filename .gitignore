@@ -1,4 +1,5 @@
 .cache
+.planning
 *.cbor
 .vscode/
 vfido_session

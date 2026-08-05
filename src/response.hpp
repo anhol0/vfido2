@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stop_token>
 #include <vector>
 #include <optional>
 
@@ -13,27 +14,33 @@
 #define MASK 0x80
 
 enum {
-    CTAPHID_MSG = 0x03,
-    CTAPHID_CBOR = 0x10,
-    CTAPHID_INIT = 0x06,
-    CTAPHID_PING = 0x01,
-    CTAPHID_WINK = 0x08,
-    CTAPHID_LOCK = 0x04,
-    CTAPHID_CANCEL = 0x11,
-    CTAPHID_ERROR = 0x3f,
+    CTAPHID_PING      = 0x01,
+    CTAPHID_MSG       = 0x03,
+    CTAPHID_LOCK      = 0x04,
+    CTAPHID_INIT      = 0x06,
+    CTAPHID_WINK      = 0x08,
+    CTAPHID_CBOR      = 0x10,
+    CTAPHID_CANCEL    = 0x11,
+    CTAPHID_KEEPALIVE = 0x3B,
+    CTAPHID_ERROR     = 0x3f,
 };
 
 class CTAPPacket {
 public:
-    uint32_t cid;
-    uint8_t  cmd = 0x00;
-    uint16_t len;
-
+    uint32_t cid = 0;
+    uint8_t  cmd = 0;
+    uint16_t len = 0;
     std::vector<uint8_t> payload;
+
     std::vector<std::vector<uint8_t>> stringify();
 };
 
 uint32_t gen_cid();
 std::optional<CTAPPacket> respond(UHIDReport &r);
+
+CTAPPacket handle_init(UHIDReport &request, uint32_t assigned_cid);
+CTAPPacket handle_ping(UHIDReport &request);
+void start_worker(UHIDReport &request);
+CTAPPacket handle_cbor(UHIDReport &request, std::stop_token stop);
 
 #endif

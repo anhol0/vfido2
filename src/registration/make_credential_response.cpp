@@ -1,5 +1,6 @@
 #include <cstdint>
 #include <openssl/obj_mac.h>
+#include <stop_token>
 #include <string>
 #include <sys/types.h>
 #include <tss2/tss2_esys.h>
@@ -7,6 +8,7 @@
 #include <openssl/rand.h>
 #include <openssl/ec.h>
 
+#include "cancellation.hpp"
 #include "cbor_operations/cbor.hpp"
 #include "credentials/credential.hpp"
 #include "error.hpp"
@@ -23,7 +25,8 @@
 
 extern CredentialStore store;
 
-std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(UHIDReport &r) {
+std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(UHIDReport &r, std::stop_token stop) {
+    cancellation_point(stop);
     if(excludeList.size() > 0) {
         for(const auto &d : excludeList) {
             if(store.has(d.id)) {
@@ -49,29 +52,32 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(UHIDReport &r) {
     // User Verification
     // Not cryptographically secure, but fine for now
     for(auto [name, option] : options) {
-        #ifdef DEBUG
+#ifdef DEBUG
             std::cout << name << ": " << option << std::endl;
-        #endif
+#endif
         if(name == "uv" && option == true) {
             const std::string username = get_user_name();
             const std::string procname = "vfido";
 
-            #ifdef DEBUG
-                #pragma message("Compiling with DEBUG mode ON - Using local config path")
-                const std::string confdir = "../config";
-            #else
-                const std::string confdir = "/etc/vfido2/config";
-            #endif
+#ifdef DEBUG
+            const std::string confdir = "../config";
+#else
+            const std::string confdir = "/etc/vfido2/config";
+#endif
 
-            int rc = authenticate_user(username, procname, confdir);
+            int rc = authenticate_user(username, procname, confdir, stop);
+            cancellation_point(stop);
             if(rc != 0) {
                 return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_UV_BLOCKED)};
             } else { break; }
         } else if (name == "uv" && option == false) {
-            #ifdef DEBUG
+#ifdef DEBUG
                 std::cout << "Authorize passkey creation" << std::endl;
-            #endif
+#endif
+            cancellation_point(stop);
             bool consent = collect_consent("Authorize passkey creation?");
+            cancellation_point(stop);
+
             if(!consent) {
                 return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_OPERATION_DENIED)};
             } else { break; }
@@ -124,6 +130,7 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(UHIDReport &r) {
     // Generating the keypair and storing the credential
     TpmCtx tpm;
     TpmLocalHandle primary = get_primary(tpm.ctx);
+    cancellation_point(stop);
     CredentialKey key = create_credential_key(tpm.ctx, primary);
     StoredCredential credential;
     credential.id = credId;
@@ -136,16 +143,19 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(UHIDReport &r) {
     credential.private_blob = key.privateBlob;
     credential.public_blob = key.publicBlob;
 
-    // Do not save dummy credentials to the store if it's a make.me.blink ping
-    if (rp.id != "make.me.blink" && rp.id != ".dummy") {
-        store.put(credential);
-    }
-
     // Doing scheiße
     auto extracted_coords = extractPublic(key.publicBlob);
     auto cose_map = build_cose_key(extracted_coords[0], extracted_coords[1]);
     authData.insert(authData.end(), cose_map.begin(), cose_map.end());
 
     std::vector<uint8_t> payload = build_authenticatorMakeCredential_response(authData);
+
+    cancellation_point(stop);
+
+    // Do not save dummy credentials to the store if it's a make.me.blink ping
+    if (rp.id != "make.me.blink" && rp.id != ".dummy") {
+        cancellation_point(stop);
+        store.put(credential);
+    }
     return payload;
 }

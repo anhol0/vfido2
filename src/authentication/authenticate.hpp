@@ -7,6 +7,8 @@
 #include <unordered_map>
 #include <tinycbor/cbor.h>
 #include <array>
+#include <stop_token>
+
 #include "uhid_report.hpp"
 #include "credentials/credential.hpp"
 #include "extensions.hpp"
@@ -42,9 +44,15 @@ class StoredCredentialsCache {
 
 class CTAPGetAssertionRequest {
 public:
+    uint32_t get_origin_cid() const {
+        return origin_cid;
+    };
+    void set_origin_cid(uint32_t cid) {
+        origin_cid = cid;
+    }
     bool parseRequest(std::vector<uint8_t> &payload);
-    std::vector<uint8_t> build_response(UHIDReport &r);
-    std::vector<uint8_t> build_response_next();
+    std::vector<uint8_t> build_response(UHIDReport &r, std::stop_token stop);
+    std::vector<uint8_t> build_response_next(std::stop_token stop);
     void clear() {
         rpId.clear();
         clientDataHash.resize(0);
@@ -57,9 +65,11 @@ public:
         };
         pinAuth.clear();
         pinProtocol = 0;
+        origin_cid = 0;
         cache.clear();
     }
 private:
+    uint32_t origin_cid = 0;
     std::string rpId;
     std::vector<uint8_t> clientDataHash;
     std::vector<PublicKeyCredentialDescriptor> allowList;
@@ -82,7 +92,8 @@ private:
     StoredCredentialsCache cache;
     std::vector<uint8_t> generate_single_credential_payload (
         StoredCredential &credential,
-        uint32_t number_of_credentials
+        std::optional<uint32_t> number_of_credentials,
+        std::stop_token stop
     );
     std::array<ParseFn, 8> dispatch_table = {
         nullptr,

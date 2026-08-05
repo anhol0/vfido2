@@ -1,10 +1,12 @@
 #include <cstdint>
 #include <openssl/rand.h>
 #include <optional>
+#include <stop_token>
 #include <vector>
 #include <iostream>
 
 #include "authenticate.hpp"
+#include "cancellation.hpp"
 #include "cbor_operations/cbor.hpp"
 #include "credentials/credential.hpp"
 #include "cryptography/tpm.hpp"
@@ -14,8 +16,9 @@
 
 extern CredentialStore store;
 
-std::vector<uint8_t> CTAPGetAssertionRequest::build_response(UHIDReport &r)
+std::vector<uint8_t> CTAPGetAssertionRequest::build_response(UHIDReport &r, std::stop_token stop)
 {
+    cancellation_point(stop);
     // Getting number of credentials
     uint32_t number_of_credentials = 0;
     std::vector<StoredCredential> available_credentials = {};
@@ -44,28 +47,32 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(UHIDReport &r)
     // No auth part for now
     // We just fake it for now, will add in the future
     for(auto [name, option] : options) {
-        #ifdef DEBUG
+#ifdef DEBUG
             std::cout << name << ": " << option << std::endl;
-        #endif
+#endif
         if(name == "uv" && option == true) {
             const std::string username = get_user_name();
             const std::string procname = "vfido";
 
-            #ifdef DEBUG
+#ifdef DEBUG
                 const std::string confdir = "../config";
-            #else
+#else
                 const std::string confdir = "/etc/vfido2/config";
-            #endif
+ #endif
 
-            int rc = authenticate_user(username, procname, confdir);
+            int rc = authenticate_user(username, procname, confdir, stop);
+            cancellation_point(stop);
             if(rc != 0) {
                 return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_UV_BLOCKED)};
             } else { break; }
         } else if (name == "uv" && option == false) {
-            #ifdef DEBUG
+#ifdef DEBUG
                 std::cout << "Authorize passkey usage" << std::endl;
-            #endif
+#endif
+            cancellation_point(stop);
             bool consent = collect_consent("Authorize passkey usage?");
+            cancellation_point(stop);
+
             if(!consent) {
                 return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_OPERATION_DENIED)};
             } else { break; }
@@ -81,7 +88,8 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(UHIDReport &r)
         if(credential_for_authentication.has_value()) {
             std::cout << "Credential found!\n";
             // Generating payload for specific credential
-            return generate_single_credential_payload(credential_for_authentication.value(), number_of_credentials);
+            cancellation_point(stop);
+            return generate_single_credential_payload(credential_for_authentication.value(), number_of_credentials, stop);
         } else {
             return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_INVALID_CREDENTIAL)};
         }
@@ -92,19 +100,20 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(UHIDReport &r)
     return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_NO_CREDENTIALS)};
 }
 
-std::vector<uint8_t> CTAPGetAssertionRequest::build_response_next() {
+std::vector<uint8_t> CTAPGetAssertionRequest::build_response_next(std::stop_token stop) {
     auto cred_maybe = cache.get_next();
-    if(!cred_maybe.has_value()) { return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_INVALID_CREDENTIAL)}; }
+    if(!cred_maybe.has_value()) { return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_NOT_ALLOWED)}; }
     auto cred = cred_maybe.value();
-    return generate_single_credential_payload(cred, cache.get_size());
+    cancellation_point(stop);
+    return generate_single_credential_payload(cred, std::nullopt, stop);
 }
 
 std::vector<uint8_t> CTAPGetAssertionRequest::generate_single_credential_payload(
     StoredCredential &credential,
-    uint32_t number_of_credentials
+    std::optional<uint32_t> number_of_credentials,
+    std::stop_token stop
 ) {
     // incrementing signCont for selected credential
-    store.incrementSigCount(credential.id);
     credential.signCount++;
     // TODO:
     // Sign the clientDataHash along with authData with the selected credential,
@@ -151,6 +160,8 @@ std::vector<uint8_t> CTAPGetAssertionRequest::generate_single_credential_payload
     }
 
     // Generating the payload
-    auto payload = build_authenticatorGetAssertion_response(authData, signature, descriptor, number_of_credentials);
+    auto payload = build_authenticatorGetAssertion_response(authData, signature, options["uv"], descriptor, number_of_credentials);
+    cancellation_point(stop);
+    store.incrementSigCount(credential.id);
     return payload;
 }

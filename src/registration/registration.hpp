@@ -6,6 +6,7 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <stop_token>
 #include <string>
 #include <sys/types.h>
 #include <unordered_map>
@@ -56,7 +57,7 @@ class CTAPMakeCredentialRequest {
         std::vector<uint8_t> pinAuth;
         uint64_t pinProtocol;
         bool parseRequest(std::vector<uint8_t> &payload);
-        std::vector<uint8_t> build_response(UHIDReport &r);
+        std::vector<uint8_t> build_response(UHIDReport &r, std::stop_token stop);
     private:
         bool parse_client_data_hash(CborValue &map);
         bool parse_rp(CborValue &map);

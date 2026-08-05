@@ -1,5 +1,4 @@
-#ifndef DEVICE_HPP
-#define DEVICE_HPP
+#pragma once
 
 #include "error.hpp"
 #include "uhid_report.hpp"
@@ -15,7 +14,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <vector>
-#include <optional>
+#include <stop_token>
 
 class FIDODevice {
 public:
@@ -23,17 +22,19 @@ public:
     ~FIDODevice();
     void init();
     bool get();
-    bool send(struct uhid_event &resp); 
+    bool send(struct uhid_event &resp);
+
+    int native_handle() const noexcept;
+
     uint32_t get_type();
     std::vector<uint8_t> get_data();
 private:
-    int fd;
+    int fd = -1;
     struct uhid_event ev;
     const std::array<uint8_t, 34> fido_report_desc;
 };
 
-std::optional<std::vector<uhid_event>> make_response(UHIDReport &report); 
-std::vector<uhid_event> make_response(CTAPPacket &packet);
-CTAPPacket make_err(CTAPError err, uint32_t cid);
-
-#endif
+std::vector<uhid_event> frame_packet(CTAPPacket &packet);
+CTAPPacket execute_ctap_request(UHIDReport report, std::stop_token stop);
+CTAPPacket make_hid_error(uint32_t cid, HIDError error);
+CTAPPacket make_cbor_error(uint32_t cid, CTAPError error);
