@@ -1,8 +1,10 @@
 #include "authenticate.hpp"
+#include "cbor_operations/cbor.hpp"
+#include "credentials/credential.hpp"
 #include "cryptography/tpm.hpp"
 #include "error.hpp"
 #include <openssl/rand.h>
-#include <stdexcept>
+#include <optional>
 #include "cryptography/crypto.hpp"
 #include <iostream>
 
@@ -46,14 +48,14 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(UHIDReport &r)
     // Collecting consent and checking auth (fingerpring or PIN) if needed
     bool consent = 1;
 
-    if (number_of_credentials == 0) {
-        return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_NO_CREDENTIALS)};
-    }
-
     StoredCredential credential_for_authentication = {};
     if(number_of_credentials > 0) {
         credential_for_authentication = available_credentials[0];
         std::cout << "Credential found!\n";
+
+        // incrementing signCont for selected credential
+        store.incrementSigCount(credential_for_authentication.id);
+        credential_for_authentication.signCount++;
         // TODO:
         // Sign the clientDataHash along with authData with the selected credential,
         // using the structure specified in https://www.w3.org/TR/webauthn/#assertion-signature
@@ -63,10 +65,10 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(UHIDReport &r)
         std::vector<uint8_t> rphash = sha256(rpId);
         // Flags
         uint8_t flags = 0x00;
-        flags |= (uint8_t)options["up"] << 0;
+        flags |= 0x01; // Explicitly assert User Presence (UP = 1)
         // flags |= (uint8_t)options["uv"] << 2;
-        flags |= 1 << 6;
-        int sc = 0;
+        // flags |= 1 << 6;
+        int sc = credential_for_authentication.signCount;
 
         // Building Attested Credential data
         std::vector<uint8_t> authData;
@@ -82,9 +84,28 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(UHIDReport &r)
         auto verification_data_hash = sha256(verificaton_data);
         TpmCtx tpm;
         TpmLocalHandle primary = get_primary(tpm.ctx);
-        auto signature = sign(tpm.ctx, primary, verification_data_hash, credential_for_authentication.public_blob, credential_for_authentication.private_blob);
-    } else {
-        std::cout << "Credential not found!\n";
+        auto signature = sign(
+            tpm.ctx,
+            primary,
+            verification_data_hash,
+            credential_for_authentication.public_blob,
+            credential_for_authentication.private_blob
+        );
+
+        // If there is only 1 credential matched by the authenticator
+        // Omit fields 0x01 and 0x04
+        // If allowList was empty or > 1 credential was found, include these two fields must be included
+        std::optional<StoredCredential> descriptor = std::nullopt;
+        if(allowList.size() != 1) {
+            descriptor = credential_for_authentication;
+        }
+
+        // Generating the payload
+        auto payload = build_authenticatorGetAssertion_response(authData, signature, descriptor, number_of_credentials);
+        return payload;
     }
-    throw std::runtime_error("TODO: AUTHENTICATION");
+
+    // If it falls through, no credentials were found and we return no credentials error
+    std::cout << "Credential not found!\n";
+    return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_NO_CREDENTIALS)};
 }
