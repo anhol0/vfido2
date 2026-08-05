@@ -22,22 +22,12 @@ enum {
     CTAPHID_ERROR = 0x3f,
 };
 
-enum {
-    ERR_INVALID_CMD,
-    ERR_INVALID_PAR,
-    ERR_INVALID_LEN,
-    ERR_INVALID_SEQ,
-    ERR_MSG_TIMEOUT,
-    ERR_CHANNEL_BUSY,
-    ERR_LOCK_REQUIRED,
-    ERR_OTHER = 0x7F
-};
-
 class CTAPPacket {
 public:
     uint32_t cid;
     uint8_t  cmd = 0x00;
     uint16_t len;
+
     std::vector<uint8_t> payload;
     std::vector<std::vector<uint8_t>> stringify();
 };

@@ -6,7 +6,6 @@
 
 #define MAX_INIT_PAYLOAD_SIZE 57 // 64 - 4 - 1 - 2
 #define MAX_CONT_PAYLOAD_SIZE 59 // 64 - 4 - 1                                 
-#define MAX_RESP_PAYLOAD_SIZE 
 
 class UHIDReport {
 public:
