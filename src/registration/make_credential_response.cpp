@@ -49,11 +49,9 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(UHIDReport &r) {
     // User Verification
     // Not cryptographically secure, but fine for now
     for(auto [name, option] : options) {
-
         #ifdef DEBUG
             std::cout << name << ": " << option << std::endl;
         #endif
-
         if(name == "uv" && option == true) {
             const std::string username = get_user_name();
             const std::string procname = "vfido";
@@ -70,6 +68,9 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(UHIDReport &r) {
                 return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_UV_BLOCKED)};
             } else { break; }
         } else if (name == "uv" && option == false) {
+            #ifdef DEBUG
+                std::cout << "Authorize passkey creation" << std::endl;
+            #endif
             bool consent = collect_consent("Authorize passkey creation?");
             if(!consent) {
                 return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_OPERATION_DENIED)};
@@ -93,7 +94,8 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(UHIDReport &r) {
     // Flags
     uint8_t flags = 0x00;
     flags |= 0x01; // Explicitly assert User Presence (UP = 1)
-    flags |= 0x01 << 2; // User verification (UV = 1)
+    // flags |= 0x01 << 2; // User verification (UV = 1)
+    flags |= options.at("uv") << 2;
     flags |= 1 << 6; // Attested Credential Data
     int sc = 0;
 

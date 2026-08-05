@@ -62,6 +62,9 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(UHIDReport &r)
                 return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_UV_BLOCKED)};
             } else { break; }
         } else if (name == "uv" && option == false) {
+            #ifdef DEBUG
+                std::cout << "Authorize passkey usage" << std::endl;
+            #endif
             bool consent = collect_consent("Authorize passkey usage?");
             if(!consent) {
                 return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_OPERATION_DENIED)};
@@ -113,8 +116,8 @@ std::vector<uint8_t> CTAPGetAssertionRequest::generate_single_credential_payload
     // Flags
     uint8_t flags = 0x00;
     flags |= 0x01; // Explicitly assert User Presence (UP = 1)
-    flags |= 0x01 << 2; // Explicitly assert User Verification (UV = 1)
-
+    // flags |= 0x01 << 2; // Explicitly assert User Verification (UV = 1)
+    flags |= options.at("uv") << 2;
     const int sc = credential.signCount;
 
     // Building Attested Credential data
