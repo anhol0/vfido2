@@ -111,6 +111,7 @@ inline uhid_event make_response(UHIDReport &report) {
     resp.u.input2.size = response.size(); 
     return resp;
 }
+
 inline uhid_event make_response(CTAPPacket &packet) {
     struct uhid_event resp;
     memset(&resp, 0, sizeof(resp));

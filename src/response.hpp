@@ -116,6 +116,8 @@ inline CTAPPacket respond(UHIDReport &r) {
                 auto cbor = build_getinfo_response();
                 // Encoding JSON in CBOR
                 payload.insert(payload.end(), cbor.begin(), cbor.end());
+            } else if(r.payload[0] == 0x01) {
+                ;
             }
             frame.cid = r.cid;
             frame.cmd = CTAPHID_CBOR | MASK;

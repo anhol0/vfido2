@@ -3,6 +3,13 @@
 
 #include <tinycbor/cbor.h>
 #include <vector>
+#include <array>
+
+typedef struct MakeCredentialReq {
+    std::array<uint8_t, 32> clientDataHash;
+
+} MakeCredentialReq;
+
 inline std::vector<uint8_t> build_getinfo_response() {
     uint8_t buffer[256];
 
@@ -26,7 +33,7 @@ inline std::vector<uint8_t> build_getinfo_response() {
     // 3: aaguid (16 zero bytes)
     cbor_encode_uint(&map, 3);
 
-    uint8_t aaguid[16] = {0};
+    uint8_t aaguid[16] = {0xf8, 0xb8, 0x44, 0x60, 0x38, 0xae, 0x47, 0xbf, 0x86, 0x20, 0xff, 0x3a, 0x36, 0x77, 0xd5, 0x48};
     cbor_encode_byte_string(&map, aaguid, 16);
 
     // 4: options
@@ -40,7 +47,7 @@ inline std::vector<uint8_t> build_getinfo_response() {
     cbor_encode_text_stringz(&options, "up");
     cbor_encode_boolean(&options, true);
 
-    // cbor_encode_text_stringz(&options, "uv");
+    // cbor_encode_text_stringz(&options, "clientPin");
     // cbor_encode_boolean(&options, true);
 
     cbor_encoder_close_container(&map, &options);
@@ -58,5 +65,7 @@ inline std::vector<uint8_t> build_getinfo_response() {
 
     return out;
 }
+
+
 
 #endif
