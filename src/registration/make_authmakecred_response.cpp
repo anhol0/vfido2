@@ -6,7 +6,7 @@
 #include <openssl/rand.h>
 #include <openssl/ec.h>
 
-#include "cbor.hpp"
+#include "cbor_operations/cbor.hpp"
 #include "credentials/credential.hpp"
 #include "device.hpp"
 #include "error.hpp"
@@ -16,7 +16,6 @@
 #include "uhid_report.hpp"
 #include "cryptography/tpm.hpp"
 
-extern FIDODevice device;
 extern CredentialStore store;
 
 std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(UHIDReport &r) {

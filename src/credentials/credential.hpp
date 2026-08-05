@@ -9,6 +9,13 @@
 
 static const std::string CRED_STORE_PATH="/etc/vfido2/cred.json";
 
+typedef struct PublicKeyCredentialDescriptor {
+    std::string type;
+    std::vector<uint8_t> id;
+    std::vector<std::string> transports;
+} PublicKeyCredentialDescriptor;
+
+
 typedef struct StoredCredential {
     std::vector<uint8_t> id;
     std::string rpId;

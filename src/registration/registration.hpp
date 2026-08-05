@@ -1,6 +1,7 @@
 #pragma once
 
 #include "uhid_report.hpp"
+#include "credentials/credential.hpp"
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -48,12 +49,6 @@ typedef struct PubKeyCredParam {
         type.clear();
     }
 } PubKeyCredParam;
-
-typedef struct PublicKeyCredentialDescriptor {
-    std::string type;
-    std::vector<uint8_t> id;
-    std::vector<std::string> transports;
-} PublicKeyCredentialDescriptor;
 
 typedef struct ExtensionValue{
     Type type;
