@@ -1,14 +1,16 @@
+#include <cstdint>
+#include <openssl/rand.h>
+#include <optional>
+#include <vector>
+#include <iostream>
+
 #include "authenticate.hpp"
 #include "cbor_operations/cbor.hpp"
 #include "credentials/credential.hpp"
 #include "cryptography/tpm.hpp"
 #include "error.hpp"
-#include <cstdint>
-#include <openssl/rand.h>
-#include <optional>
 #include "cryptography/crypto.hpp"
-#include <iostream>
-#include <vector>
+#include "uv/src/auth.hpp"
 
 extern CredentialStore store;
 
@@ -41,13 +43,36 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(UHIDReport &r)
 
     // No auth part for now
     // We just fake it for now, will add in the future
+    for(auto [name, option] : options) {
+        #ifdef DEBUG
+            std::cout << name << ": " << option << std::endl;
+        #endif
+        if(name == "uv" && option == true) {
+            const std::string username = get_user_name();
+            const std::string procname = "vfido";
+
+            #ifdef DEBUG
+                const std::string confdir = "../config";
+            #else
+                const std::string confdir = "/etc/vfido2/config";
+            #endif
+
+            int rc = authenticate_user(username, procname, confdir);
+            if(rc != 0) {
+                return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_UV_BLOCKED)};
+            } else { break; }
+        } else if (name == "uv" && option == false) {
+            bool consent = collect_consent("Authorize passkey usage?");
+            if(!consent) {
+                return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_OPERATION_DENIED)};
+            } else { break; }
+        }
+    }
 
     // We do not support extensions
     // Like, at all
 
     // Collecting consent and checking auth (fingerpring or PIN) if needed
-    bool consent = 1;
-
     if(number_of_credentials > 0) {
         auto credential_for_authentication = cache.get_next();
         if(credential_for_authentication.has_value()) {
