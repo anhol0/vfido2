@@ -16,7 +16,7 @@ add_executable(${PN}
     ${SOURCE_DIR}/device.cpp
     # Registration
     ${SOURCE_DIR}/registration/registration.cpp
-    ${SOURCE_DIR}/registration/make_authmakecred_response.cpp
+    ${SOURCE_DIR}/registration/make_credential_response.cpp
     # Credential storing
     ${SOURCE_DIR}/credentials/credential.cpp
     # Cryptography operations
@@ -24,10 +24,10 @@ add_executable(${PN}
     ${SOURCE_DIR}/cryptography/tpm.cpp
     # Authentication
     ${SOURCE_DIR}/authentication/authenticate.cpp
-    ${SOURCE_DIR}/authentication/get_assertion_parsing.cpp
     # CBOR Operations
     ${SOURCE_DIR}/cbor_operations/cbor.cpp
     ${SOURCE_DIR}/cbor_operations/make_cred_parsing.cpp
+    ${SOURCE_DIR}/cbor_operations/get_assertion_parsing.cpp
 )
 
 find_package(PkgConfig REQUIRED)

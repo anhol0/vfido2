@@ -3,7 +3,6 @@
 #include "device.hpp"
 #include "error.hpp"
 #include "uhid_report.hpp"
-#include "macro.hpp"
 #include <cstdint>
 #include <iostream>
 
@@ -49,7 +48,8 @@ void run(FIDODevice &device) {
                 // Command (1 byte) 
                 uint8_t cmd = data[5] & 0x7F;
                 // Length of the nonce (2 bytes)
-                uint16_t length = MAKE_U16(data[6], data[7]); 
+                uint16_t length = ((uint16_t)data[6] << 8) |
+                                  ((uint16_t)data[7]); 
 
                 report.cid = cid;
                 report.cmd = cmd;
