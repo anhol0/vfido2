@@ -8,7 +8,6 @@
 
 #include "cbor_operations/cbor.hpp"
 #include "credentials/credential.hpp"
-#include "device.hpp"
 #include "error.hpp"
 #include "registration/registration.hpp"
 #include "cryptography/crypto.hpp"
@@ -22,7 +21,7 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(UHIDReport &r) {
     if(excludeList.size() > 0) {
         for(const auto &d : excludeList) {
             if(store.has(d.id)) {
-                return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_CREDENTIAL_EXCLUDED)};   
+                return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_CREDENTIAL_EXCLUDED)};
             }
         }
     }
@@ -38,7 +37,7 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(UHIDReport &r) {
     }
 
     if(selected_alg == 0) {
-        return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_UNSUPPORTED_ALGORITHM)};   
+        return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_UNSUPPORTED_ALGORITHM)};
     }
 
     // For now, since User Verification is not yet supported
@@ -59,11 +58,11 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(UHIDReport &r) {
     // credIdLen (2 bytes)
     // credId (N bytes)
     // COSE public key
-    
+
     // rpIdHash
     std::vector<uint8_t> rphash = sha256(rp.id);
 
-    // Flags 
+    // Flags
     uint8_t flags = 0x00;
     flags |= (uint8_t)options["up"] << 0;
     // flags |= (uint8_t)options["uv"] << 2;
@@ -94,7 +93,7 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(UHIDReport &r) {
 
     // Generating the keypair and storing the credential
     TpmCtx tpm;
-    ESYS_TR primary = create_primary(tpm.ctx); 
+    ESYS_TR primary = create_primary(tpm.ctx);
     CredentialKey key = create_credential_key(tpm.ctx, primary);
     StoredCredential credential;
     credential.id = credId;
@@ -104,11 +103,11 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(UHIDReport &r) {
     credential.alg = selected_alg;
     credential.private_blob = key.privateBlob;
     credential.public_blob = key.publicBlob;
-    
+
     store.put(credential);
-    
+
     // Doing scheiße
-    auto extracted_coords = extract(key.publicBlob);
+    auto extracted_coords = extractPublic(key.publicBlob);
     auto cose_map = build_cose_key(extracted_coords[0], extracted_coords[1]);
     authData.insert(authData.end(), cose_map.begin(), cose_map.end());
 
@@ -119,4 +118,3 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(UHIDReport &r) {
 
     return payload;
 }
-

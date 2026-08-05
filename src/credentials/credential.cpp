@@ -165,8 +165,13 @@ void CredentialStore::put(const StoredCredential &cred) {
 }
 
 
-const StoredCredential& CredentialStore::get(const std::vector<uint8_t> &credId) const {
+const StoredCredential& CredentialStore::get_by_credId(const std::vector<uint8_t> &credId) const {
     return stored_.at(toHex(credId)); 
+}
+
+const std::unordered_map<std::string, StoredCredential> CredentialStore::get_all_creds() const
+{
+    return stored_;
 }
 
 void CredentialStore::incrementSigCount(const std::vector<uint8_t> &credId) {

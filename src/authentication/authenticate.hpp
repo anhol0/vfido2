@@ -6,7 +6,6 @@
 #include <unordered_map>
 #include <tinycbor/cbor.h>
 #include <array>
-#include <variant>
 #include "uhid_report.hpp"
 #include "credentials/credential.hpp"
 #include "extensions.hpp"
@@ -44,7 +43,7 @@ private:
         &CTAPGetAssertionRequest::parse_options,
         &CTAPGetAssertionRequest::parse_pin_auth,
         &CTAPGetAssertionRequest::parse_pin_protocol
-    }; 
+    };
     void clear() {
         rpId.clear();
         clientDataHash.resize(0);

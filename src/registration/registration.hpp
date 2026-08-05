@@ -9,7 +9,6 @@
 #include <string>
 #include <sys/types.h>
 #include <unordered_map>
-#include <variant>
 #include <vector>
 
 #include <tinycbor/cbor.h>
@@ -35,7 +34,7 @@ typedef struct UserEntity {
 
 typedef struct PubKeyCredParam {
     std::string type;
-    int alg;  
+    int alg;
     void clear() {
         type.clear();
     }
@@ -89,4 +88,3 @@ class CTAPMakeCredentialRequest {
             extensions.clear();
         }
 };
-
