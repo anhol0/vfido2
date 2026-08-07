@@ -7,7 +7,14 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(SOURCE_DIR src)
 
+include(CTest)
+
 add_subdirectory(${SOURCE_DIR}/uv)
+
+add_library(ctaphid_frame_processor
+    ${SOURCE_DIR}/frame_processor.cpp
+)
+target_include_directories(ctaphid_frame_processor PUBLIC ${SOURCE_DIR})
 
 add_executable(${PN}
     # Uncategorized
@@ -57,5 +64,10 @@ target_link_libraries(${PN} PRIVATE
     ${TSS2_ESYS_LIBRARIES}
     ${TSS2_RC_LIBRARIES}
     ${TSS2_MU_LIBRARIES}
+    ctaphid_frame_processor
     uv
 )
+
+if(BUILD_TESTING)
+    add_subdirectory(tests)
+endif()
