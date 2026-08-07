@@ -1,15 +1,15 @@
-#ifndef UHID_REPORT_HPP
-#define UHID_REPORT_HPP
+#pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
-#define MAX_INIT_PAYLOAD_SIZE 57 // 64 - 4 - 1 - 2
-#define MAX_CONT_PAYLOAD_SIZE 59 // 64 - 4 - 1                                 
+constexpr size_t MAX_INIT_PAYLOAD_SIZE = 57; // 64 - 4 - 1 - 2
+constexpr size_t MAX_CONT_PAYLOAD_SIZE = 59; // 64 - 4 - 1
 
 class UHIDReport {
 public:
-    uint32_t cid; 
+    uint32_t cid;
     uint8_t cmd;
     uint16_t len;
     std::vector<uint8_t> payload;
@@ -24,5 +24,3 @@ inline void UHIDReport::clear() {
     len = 0;
     seq = 0;
 }
-
-#endif

@@ -1,5 +1,4 @@
-#ifndef RESPONSE_HPP
-#define RESPONSE_HPP
+#pragma once
 
 #include <cstdint>
 #include <cstdio>
@@ -11,7 +10,7 @@
 
 #include "uhid_report.hpp"
 
-#define MASK 0x80
+constexpr uint8_t MASK = 0x80;
 
 enum {
     CTAPHID_PING      = 0x01,
@@ -35,12 +34,7 @@ public:
     std::vector<std::vector<uint8_t>> stringify();
 };
 
-uint32_t gen_cid();
-std::optional<CTAPPacket> respond(UHIDReport &r);
-
 CTAPPacket handle_init(UHIDReport &request, uint32_t assigned_cid);
 CTAPPacket handle_ping(UHIDReport &request);
 void start_worker(UHIDReport &request);
 CTAPPacket handle_cbor(UHIDReport &request, std::stop_token stop);
-
-#endif

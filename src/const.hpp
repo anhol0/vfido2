@@ -1,5 +1,4 @@
-#ifndef CONST_HPP
-#define CONST_HPP
+#pragma once
 
 #include <cstdint>
 #include <array>
@@ -7,5 +6,3 @@
 
 // static const std::array<uint8_t, 16> aaguid = {0xf8, 0xb8, 0x44, 0x60, 0x38, 0xae, 0x47, 0xbf, 0x86, 0x20, 0xff, 0x3a, 0x36, 0x77, 0xd5, 0x48};
 static const std::array<uint8_t, 16> aaguid = {0};
-
-#endif

@@ -11,19 +11,9 @@
 #include "registration/registration.hpp"
 #include "authentication/authenticate.hpp"
 
-// extern CredentialStore store;
-
 constexpr uint8_t CAPABILITY_WINK = 0x01;
 constexpr uint8_t CAPABILITY_CBOR = 0x04;
 constexpr uint8_t CAPABILITY_NMSG = 0x08;
-
-uint32_t gen_cid() {
-    uint32_t cid;
-    do {
-        arc4random_buf(&cid, sizeof(cid));
-    } while (cid == 0xffffffff);
-    return cid;
-}
 
 std::vector<std::vector<uint8_t>> CTAPPacket::stringify() {
     std::vector<std::vector<uint8_t>> out;
@@ -65,13 +55,17 @@ std::vector<std::vector<uint8_t>> CTAPPacket::stringify() {
         }
     }
 #ifdef DEBUG
-    for(const auto &a : out) {
-        // Adding initialization packet to the sequence
-        printf("\x1b[1;32mOut data: \x1b[0m");
-        for(const auto &b : a) {
-             printf("%02x", b);
+    if(cmd != CTAPHID_KEEPALIVE) {
+        for(const auto &a : out) {
+            // Adding initialization packet to the sequence
+            printf("\x1b[1;32mOut data: \x1b[0m");
+            for(const auto &b : a) {
+                printf("%02x", b);
+            }
+            printf("\n");
         }
-        printf("\n");
+    } else {
+        std::cout << "\x1b[1;36mKeep-Alive...\x1b[0m\n";
     }
 #endif
     return out;
@@ -93,23 +87,6 @@ void print_response_payload(std::string method, std::vector<uint8_t> &payload) {
     }
     std::cout << "\n\x1b[0m";
 }
-
-// std::optional<CTAPPacket> respond(UHIDReport &r) {
-//     CTAPPacket packet;
-//     switch(r.cmd) {
-//         case CTAPHID_CBOR: {
-
-//         }
-//         case CTAPHID_MSG:
-//         case CTAPHID_CANCEL:
-//         case CTAPHID_PING:
-//         case CTAPHID_WINK:
-//         case CTAPHID_LOCK:
-//         case CTAPHID_ERROR:
-//             break;
-//     }
-//     return packet;
-// }
 
 CTAPPacket handle_init(UHIDReport &request, uint32_t assigned_cid) {
     CTAPPacket response;
@@ -211,11 +188,12 @@ CTAPPacket handle_cbor(UHIDReport &request, std::stop_token stop) {
         }
 #endif
 
-        // Parse the authenticatorGetAssertion request
-
         static CTAPGetAssertionRequest gar;
         if(command == 0x02) {
+            // Since gar is static for caching purposes (see authenticatorGetNextAssertion),
+            // It needs to be wiped before next authenticatorGetAssertion request can be processed
             gar.clear();
+            // Parse the authenticatorGetAssertion request
             if(!gar.parseRequest(payload)) {
                 gar.clear();
                 std::cerr << "There is a problem with the authenticatorGetAssertion request\n";
@@ -235,6 +213,8 @@ CTAPPacket handle_cbor(UHIDReport &request, std::stop_token stop) {
             }
         } else if(command == 0x08) {
             if(gar.get_origin_cid() == 0 || gar.get_origin_cid() != request.cid) {
+                // Filtering out authenticatorGetNextAssertion packets
+                // Packets with corrupted cid or cid that differs from origininal one are discarded
                 return make_cbor_error(
                     request.cid,
                     CTAPError::CTAP2_ERR_NOT_ALLOWED
@@ -257,7 +237,7 @@ CTAPPacket handle_cbor(UHIDReport &request, std::stop_token stop) {
         }
 
 #ifdef DEBUG
-        // Print payload contents for debugging purposes
+        // Print output payload contents for debugging purposes
         if(command == 0x02) {
             print_response_payload("authenticatorGetAssertion", payload);
         } else if(command == 0x08) {
@@ -265,7 +245,7 @@ CTAPPacket handle_cbor(UHIDReport &request, std::stop_token stop) {
         }
 #endif
     } else {
-        return make_cbor_error(request.cid, CTAPError::CTAP2_ERR_INVALID_SUBCOMMAND);
+        return make_cbor_error(request.cid, CTAPError::CTAP1_ERR_INVALID_COMMAND);
     }
     packet.cid = request.cid;
     packet.cmd = CTAPHID_CBOR | MASK;

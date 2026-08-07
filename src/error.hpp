@@ -60,6 +60,7 @@ enum class CTAPError : uint8_t {
 };
 
 enum class HIDError : uint8_t {
+    CTAP1_ERR_SUCCESS                    = 0x00,
     CTAP1_ERR_INVALID_COMMAND            = 0x01,
     CTAP1_ERR_INVALID_PARAMETER          = 0x02,
     CTAP1_ERR_INVALID_LENGTH             = 0x03,

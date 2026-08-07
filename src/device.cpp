@@ -10,6 +10,9 @@
 #include <unistd.h>
 
 FIDODevice::FIDODevice() :
+    // FIDO report descriptor
+    // It tells the system that the device is actually a FIDO device, not any other HID device
+    // It is needed only for uhid kernel module to recognize the device
     fido_report_desc{{
         0x06, 0xD0, 0xF1,        // Usage Page (FIDO 0xF1D0)
         0x09, 0x01,              // Usage (U2F HID Authenticator Device)
@@ -85,7 +88,7 @@ uint32_t FIDODevice::get_type() {
     return ev.type;
 }
 
-std::vector<uint8_t> FIDODevice::get_data() {
+std::vector<uint8_t> FIDODevice::get_data() const {
      return std::vector<uint8_t>(ev.u.output.data, ev.u.output.data+ev.u.output.size);
 }
 

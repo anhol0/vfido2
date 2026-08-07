@@ -1,5 +1,4 @@
-#ifndef CRYPTO_HPP
-#define CRYPTO_HPP
+#pragma once
 
 #include <cstdint>
 #include <string>
@@ -13,5 +12,3 @@ struct Credential {
 
 std::vector<uint8_t> sha256(std::string &str);
 std::vector<uint8_t> sha256(std::vector<uint8_t> &bytes);
-
-#endif

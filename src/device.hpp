@@ -27,7 +27,7 @@ public:
     int native_handle() const noexcept;
 
     uint32_t get_type();
-    std::vector<uint8_t> get_data();
+    std::vector<uint8_t> get_data() const;
 private:
     int fd = -1;
     struct uhid_event ev;

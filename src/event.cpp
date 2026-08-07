@@ -1,6 +1,8 @@
+#include <algorithm>
 #include <alloca.h>
 #include <bits/chrono.h>
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <chrono>
 #include <cstdlib>
@@ -9,6 +11,7 @@
 #include <limits>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <stop_token>
 #include <sys/poll.h>
@@ -21,18 +24,14 @@
 #include "device.hpp"
 #include "response.hpp"
 #include "error.hpp"
-#include "credentials/credential.hpp"
 #include "uhid_report.hpp"
 
-// --- PACKET STRUCTURE ---
+// PACKET STRUCTURE
 // Channel ID (4 Bytes)
 // CMD (1 Byte)
 // Payload length (2 Bytes)
 // Payload (N Bytes)
 // Padding (zero everything until 64 bytes)
-
-CredentialStore store;
-FIDODevice device;
 
 constexpr uint32_t CTAPHID_INVALID_CID   = 0x00000000;
 constexpr uint32_t CTAPHID_BROADCAST_CID = 0xFFFFFFFF;
@@ -110,18 +109,30 @@ namespace {
         allocated_cids.insert(candidate);
         return candidate;
     }
+
+    struct IncomingTransaction {
+        UHIDReport report;
+        std::chrono::steady_clock::time_point deadline;
+    };
 }
 
 void run(FIDODevice &device) {
 #ifdef DEBUG
-    #pragma message("Compiling with DEBUG mode ON - Using local config path")
+    // Showing
+    #pragma clang diagnostic push
+    #pragma clang diagnostic ignored "-W#pragma-messages"
+    #pragma message("Compiling with DEBUG mode ON")
+    #pragma diagnostic pop
 #endif
-    UHIDReport report;
     std::unordered_set<uint32_t> allocated_cids;
 
     std::mutex completion_mutex;
     std::optional<TaskResult> completion;
     std::optional<ActiveTask> active;
+
+    using Clock = std::chrono::steady_clock;
+    constexpr auto MESSAGE_ASSEMBLY_TIMEOUT = std::chrono::seconds(3);
+    constexpr std::size_t CTAPHID_MAX_PAYLOAD_SIZE = 7609;
 
     uint64_t next_generation = 1;
     std::jthread worker;
@@ -132,14 +143,24 @@ void run(FIDODevice &device) {
         .revents = 0
     };
 
-    store.init();
+    // Record incoming transaction and completed report
+    std::optional<IncomingTransaction> incoming;
     while (true) {
         device_poll.revents = 0;
 
-        const int timeout =
-              !active ? -1 :
-              active->cancel_requested ? 20 :
-              milliseconds_until(active->next_keepalive);
+        // Timeout calculation
+        int timeout = -1;
+        if(active) {
+            timeout = active->cancel_requested ? 20 :milliseconds_until(active->next_keepalive);
+        }
+        if(incoming) {
+            const int assembly_timeout = milliseconds_until(incoming->deadline);
+            if(timeout < 0 || assembly_timeout < timeout) {
+                timeout = assembly_timeout;
+            }
+        }
+        // End timeout calculation
+
         int poll_result;
 
         do {
@@ -154,104 +175,198 @@ void run(FIDODevice &device) {
             throw std::runtime_error("UHID polling failed");
         }
 
+        const auto now = Clock::now();
+        if(incoming && now >= incoming->deadline) {
+            const uint32_t timed_out_cid = incoming->report.cid;
+            incoming.reset();
+            send_packet(device, make_hid_error(timed_out_cid, HIDError::CTAP1_ERR_TIMEOUT));
+        }
+
         if(device_poll.revents & POLLIN) {
             if(!device.get())
                 continue;
 
             // If client sent data to the server, process it
             if (device.get_type() == UHID_OUTPUT) {
+                std::optional<UHIDReport> completed;
+                const std::vector<uint8_t> data = device.get_data();
 
-                std::vector<uint8_t> data = device.get_data();
+                std::span<const uint8_t> frame = data;
+                if(frame.size()  == 65 && frame[0] == 0) {
+                    frame = frame.subspan(1);
+                }
+                if(frame.size() != 64) {
+                    std::cerr << "Invalid HID request size\n";
+                    continue;
+                }
 
-                // Log the data in debug configuration
 #ifdef DEBUG
-                    printf("\x1b[1;31mGot data: \x1b[0m");
-                    for(int i = 1; i < data.size(); i++) {
-                        printf("%02x", data[i]);
-                    }
-                    std::cout << "\n";
+                // Log the data in debug configuration
+                printf("\x1b[1;31mGot data: \x1b[0m");
+                for(int i = 1; i < frame.size(); i++) {
+                    printf("%02x", frame[i]);
+                }
+                std::cout << "\n";
 #endif
 
+                uint32_t cid = (static_cast<uint32_t>(frame[0]) << 24) |
+                               (static_cast<uint32_t>(frame[1]) << 16) |
+                               (static_cast<uint32_t>(frame[2]) << 8 ) |
+                               (static_cast<uint32_t>(frame[3]));
+
                 // Check if the frame is initialization frame
-                uint8_t is_init_packet = (data[5] & 0x80);
-                bool respd = false;
+                uint8_t is_init_packet = (frame[4] & MASK);
 
                 // Handling of initialization and continuation packets
                 // Can be performed synchronously
+                // Parsing the frames that arrive from the authenticator and building one singular UHIDReport
+                // It will be used later in creating responses
                 if(is_init_packet) {
                     // Channel ID (4 bytes)
-                    uint32_t cid = ((uint32_t)data[1] << 24) |
-                                   ((uint32_t)data[2] << 16) |
-                                   ((uint32_t)data[3] << 8 ) |
-                                   ((uint32_t)data[4]);
+
                     // Command (1 byte)
-                    uint8_t cmd = data[5] & 0x7F;
+                    uint8_t cmd = frame[4] & 0x7F;
+
                     // Length of the nonce (2 bytes)
-                    uint16_t length = ((uint16_t)data[6] << 8) |
-                                      ((uint16_t)data[7]);
+                    uint16_t length = ((uint16_t)frame[5] << 8) |
+                                      ((uint16_t)frame[6]);
 
-                    report.cid = cid;
-                    report.cmd = cmd;
-                    report.len = length;
-                    report.payload.clear();
+                    // If it is initialization packet is bigger then MAX_INIT_PAYLOAD_SIZE
+                    if(length > CTAPHID_MAX_PAYLOAD_SIZE) {
+                        send_packet(device, make_hid_error(cid, HIDError::CTAP1_ERR_INVALID_LENGTH));
+                        continue;
+                    }
 
-                    // If it is initialization packet and payload is bigger then MAX_INIT_PAYLOAD_SIZE
-                    if(report.len > MAX_INIT_PAYLOAD_SIZE) {
-                        for(int i = 0; i < MAX_INIT_PAYLOAD_SIZE; i++) {
-                            report.payload.push_back(data[8+i]);
-                        }
-                        respd = false;
+                    // CTAPHID_INITs' and CTAPHID_CANCELs' payloads have to be
+                    // Exactly 8 and 0 bytes respectively
+                    if (cmd == CTAPHID_INIT && length != 8) {
+                         send_packet(device,make_hid_error(cid,HIDError::CTAP1_ERR_INVALID_LENGTH));
+                         continue;
+                     }
+
+                     if (cmd == CTAPHID_CANCEL && length != 0) {
+                         send_packet(device,make_hid_error(cid,HIDError::CTAP1_ERR_INVALID_LENGTH));
+                         continue;
+                     }
+
+                    // Cancel on a non-active CID should be ignored
+                    if (cmd == CTAPHID_CANCEL && (!active || cid != active->cid)) {
+                        continue;
                     }
-                    // If init packet is the only one in the packet sequence
-                    else {
-                        for(int i = 0; i < report.len; i++) {
-                            report.payload.push_back(data[8+i]);
+
+                    if(active) {
+                        const bool allowed_control_command =
+                            cid == active->cid &&
+                            (cmd == CTAPHID_CANCEL ||
+                             cmd == CTAPHID_INIT);
+                        if(!allowed_control_command) {
+                            send_packet(device, make_hid_error(cid, HIDError::CTAP1_ERR_CHANNEL_BUSY));
+                            continue;
                         }
-                        respd = true;
                     }
+
+                    // Different CID can't interrupt message assembly
+                    if(incoming && cid != incoming->report.cid) {
+                        send_packet(device, make_hid_error(cid, HIDError::CTAP1_ERR_CHANNEL_BUSY));
+                        continue;
+                    }
+
+                    // Block packets that are being sent on uninitialized channels
+                    const bool allocating_channel =
+                        cid == CTAPHID_BROADCAST_CID &&
+                        cmd == CTAPHID_INIT;
+
+                    if(!allocating_channel && !allocated_cids.contains(cid)) {
+                        send_packet(device, make_hid_error(cid, HIDError::CTAP1_ERR_INVALID_CHANNEL));
+                        continue;
+                    }
+
+                    // Same CID INIT aborts incomplete message assembly
+                    if(incoming && cid == incoming->report.cid && cmd == CTAPHID_INIT) {
+                        incoming.reset();
+                    } else if (incoming) {
+                        const uint32_t interrupted_cid = incoming->report.cid;
+                        incoming.reset();
+                        send_packet(device, make_hid_error(interrupted_cid, HIDError::CTAP1_ERR_INVALID_SEQ));
+                        continue;
+                    }
+
+                    UHIDReport next {};
+                    next.cid = cid;
+                    next.cmd = cmd;
+                    next.len = length;
+
+                    const std::size_t first_payload_size = std::min<std::size_t>(length, MAX_INIT_PAYLOAD_SIZE);
+                    next.payload.insert(next.payload.end(), frame.begin()+7, frame.begin()+7+first_payload_size);
+
+                    if(next.payload.size() == next.len) {
+                        completed = std::move(next);
+                    } else  {
+                        incoming = IncomingTransaction{
+                            .report = std::move(next),
+                            .deadline = Clock::now() + MESSAGE_ASSEMBLY_TIMEOUT
+                        };
+                    }
+
                 } else {
-                    uint32_t frame_cid = ((uint32_t)data[1] << 24) |
-                                   ((uint32_t)data[2] << 16) |
-                                   ((uint32_t)data[3] << 8 ) |
-                                   ((uint32_t)data[4]);
-                    if(frame_cid != report.cid || frame_cid == 0 ) {
+                    if(!incoming)
+                        continue;
+
+                    if(cid != incoming->report.cid)
+                        continue;
+
+                    UHIDReport &current = incoming->report;
+                    const uint8_t sequence = frame[4];
+
+                    if(sequence != current.seq) {
+                        const uint32_t invalid_cid = current.cid;
+                        incoming.reset();
+                        send_packet(device, make_hid_error(invalid_cid, HIDError::CTAP1_ERR_INVALID_SEQ));
                         continue;
                     }
-                    uint8_t expected_seq = report.seq;
-                    report.seq = data[5];
-                    if(expected_seq != report.seq) {
-                        std::cerr << "Continuation packets out of order\n";
-                        send_packet(device, make_hid_error(report.cid, HIDError::CTAP1_ERR_INVALID_SEQ));
-                        report.clear();
-                        continue;
-                    }
-                    report.seq++;
-                    // If continuation packet
-                    for(int i = 0; i < MAX_CONT_PAYLOAD_SIZE; i++) {
-                        report.payload.push_back(data[6+i]);
-                        // If size of payload recieved = size of payload expected
-                        // Break tf out
-                        if(report.payload.size() >= report.len) {
-                            respd = true;
-                            break;
-                        }
-                    }
-                    if(report.payload.size() > 7609) {
-                        report.clear();
-                        send_packet(device, make_hid_error(report.cid, HIDError::CTAP1_ERR_INVALID_LENGTH));
-                        continue;
+
+                    ++current.seq;
+
+                    const std::size_t remaining = current.len - current.payload.size();
+                    const std::size_t amount = std::min<std::size_t>(remaining, MAX_CONT_PAYLOAD_SIZE);
+                    current.payload.insert(current.payload.end(), frame.begin() + 5, frame.begin() + 5 + amount);
+
+                    if(current.payload.size() == current.len) {
+                        completed = std::move(current);
+                        incoming.reset();
                     }
                 }
+                // End UHID frame parsing
 
-                if(respd) {
-                    UHIDReport request = std::move(report);
-                    report.clear();
+                // Building and sending responses for the requests
+                // makeCredential and getAssertion requests are handled asynchronously on a separate thread
+                // This is done to not block main thread from packet receiving and ability to send keep-alive packets
+                // Cancel requests can arrive at a time of operation processing
+                // Also parallel requests may arrive and senser will receive ERR_CHANNEL_BUSY error
+                if(completed) {
+                    UHIDReport request = std::move(*completed);
+                    completed.reset();
 
+                    if(request.cmd == CTAPHID_CANCEL) {
+                        if(active &&
+                            active->cid == request.cid &&
+                            !active->discard_result
+                        ){
+                            active->cancel_requested = true;
+                            worker.request_stop();
+                        }
+                        continue;
+                    }
+
+                    // Handling initialization packets
                     if(request.cmd == CTAPHID_INIT) {
+
                         if(request.payload.empty()) {
                             send_packet(device, make_hid_error(request.cid, HIDError::CTAP1_ERR_INVALID_LENGTH));
                             continue;
                         }
+
+                        // Blocking any other simultaneous requests
                         if(active && request.cid != active->cid) {
                             send_packet(device, make_hid_error(request.cid, HIDError::CTAP1_ERR_CHANNEL_BUSY));
                             continue;
@@ -278,17 +393,7 @@ void run(FIDODevice &device) {
                         continue;
                     }
 
-                    if(request.cmd == CTAPHID_CANCEL) {
-                        if(active &&
-                            active->cid == request.cid &&
-                            !active->discard_result
-                        ){
-                            active->cancel_requested = true;
-                            worker.request_stop();
-                        }
-                        continue;
-                    }
-
+                    // Error handling for incoming packets
                     if (!allocated_cids.contains(request.cid)) {
                         send_packet(device, make_hid_error(request.cid,HIDError::CTAP1_ERR_INVALID_CHANNEL));
                         continue;
@@ -297,23 +402,24 @@ void run(FIDODevice &device) {
                     if (active) {
                          send_packet(device, make_hid_error(request.cid, HIDError::CTAP1_ERR_CHANNEL_BUSY));
                          continue;
-                     }
+                    }
+                    // End error handling
 
+                    // Echoing payload of the request in response
                     if(request.cmd == CTAPHID_PING) {
                         send_packet(device, handle_ping(request));
                         continue;
                     }
 
+                    // Handling all the CBOR operations on a separahe thread
                     if(request.cmd == CTAPHID_CBOR) {
                         if(request.payload.empty()) {
-                            auto packet = make_hid_error(request.cid, HIDError::CTAP1_ERR_INVALID_LENGTH);
-                            send_packet(device, std::move(packet));
+                            send_packet(device, make_hid_error(request.cid, HIDError::CTAP1_ERR_INVALID_LENGTH));
                             continue;
                         }
 
                         if(active) {
-                            auto packet = make_hid_error(request.cid, HIDError::CTAP1_ERR_CHANNEL_BUSY);
-                            send_packet(device, std::move(packet));
+                            send_packet(device, make_hid_error(request.cid, HIDError::CTAP1_ERR_CHANNEL_BUSY));
                             continue;
                         }
 
@@ -358,6 +464,7 @@ void run(FIDODevice &device) {
                         });
                     }
 
+                    // If any other command arrives, it is invalid
                     else {
                         send_packet(device, make_hid_error(request.cid, HIDError::CTAP1_ERR_INVALID_COMMAND));
                         continue;
@@ -379,11 +486,13 @@ void run(FIDODevice &device) {
                 send_packet(device, std::move(ready->packet));
             }
             active.reset();
+
         }
-        const auto now = std::chrono::steady_clock::now();
+
+        const auto keepalive_now = Clock::now();
         if(
             active &&
-            now >= active->next_keepalive &&
+            keepalive_now >= active->next_keepalive &&
             !active->cancel_requested
         ){
             send_keepalive(
@@ -391,7 +500,7 @@ void run(FIDODevice &device) {
                 active->cid,
                 active->status
             );
-            active->next_keepalive = now + std::chrono::milliseconds(100);
+            active->next_keepalive = keepalive_now + std::chrono::milliseconds(100);
         }
     }
 }

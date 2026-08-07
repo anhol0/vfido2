@@ -1,8 +1,5 @@
-#ifndef EVENT_HPP
-#define EVENT_HPP
+#pragma once
 
 #include "device.hpp"
 
 void run(FIDODevice &device);
-
-#endif 
