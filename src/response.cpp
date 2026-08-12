@@ -253,5 +253,3 @@ CTAPPacket handle_cbor(UHIDReport &request, std::stop_token stop) {
     packet.payload = payload;
     return packet;
 }
-
-void start_worker(UHIDReport &request);

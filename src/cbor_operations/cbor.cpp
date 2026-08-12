@@ -11,6 +11,9 @@
 #include <tinycbor/cbor.h>
 #include <vector>
 
+// Returning the authenticator information
+// Currently, AAGUID is zeroed out
+// It will be replaced with a real one after I recieve confirmation from https://mymds.fidoalliance.org/
 std::vector<uint8_t> build_getinfo_response() {
     uint8_t buffer[256];
 
@@ -49,9 +52,6 @@ std::vector<uint8_t> build_getinfo_response() {
 
     cbor_encode_text_stringz(&options, "uv");
     cbor_encode_boolean(&options, true);
-
-    // cbor_encode_text_stringz(&options, "clientPin");
-    // cbor_encode_boolean(&options, true);
 
     cbor_encoder_close_container(&map, &options);
 

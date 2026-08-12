@@ -80,15 +80,15 @@ private:
         {"up", true}
     };
     std::vector<uint8_t> pinAuth;
-    uint64_t pinProtocol;
-    bool parse_rp_id(CborValue &map);
-    bool parse_client_data_hash(CborValue &map);
-    bool parse_allow_list(CborValue &map);
-    bool parse_extensions(CborValue &map);
-    bool parse_options(CborValue &map);
-    bool parse_pin_auth(CborValue &map);
-    bool parse_pin_protocol(CborValue &map);
-    using ParseFn = bool (CTAPGetAssertionRequest::*) (CborValue &value);
+    uint64_t pinProtocol = 0;
+    void parse_rp_id(CborValue &map);
+    void parse_client_data_hash(CborValue &map);
+    void parse_allow_list(CborValue &map);
+    void parse_extensions(CborValue &map);
+    void parse_options(CborValue &map);
+    void parse_pin_auth(CborValue &map);
+    void parse_pin_protocol(CborValue &map);
+    using ParseFn = void (CTAPGetAssertionRequest::*) (CborValue &value);
     StoredCredentialsCache cache;
     std::vector<uint8_t> generate_single_credential_payload (
         StoredCredential &credential,

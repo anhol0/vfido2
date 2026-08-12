@@ -35,6 +35,7 @@ add_executable(${PN}
     ${SOURCE_DIR}/authentication/get_assertion_response.cpp
     # CBOR Operations
     ${SOURCE_DIR}/cbor_operations/cbor.cpp
+    ${SOURCE_DIR}/cbor_operations/cbor_utils.cpp
     ${SOURCE_DIR}/cbor_operations/make_cred_parsing.cpp
     ${SOURCE_DIR}/cbor_operations/get_assertion_parsing.cpp
 )

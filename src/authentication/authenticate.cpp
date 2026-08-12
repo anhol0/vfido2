@@ -1,41 +1,58 @@
-#include "authenticate.hpp"
+#include "authentication/authenticate.hpp"
+
+#include <array>
+#include <cstdint>
 #include <iostream>
+#include <set>
 
-bool CTAPGetAssertionRequest::parseRequest(std::vector<uint8_t> &payload) {
+#include "cbor_operations/cbor_utils.hpp"
+
+bool CTAPGetAssertionRequest::parseRequest(
+    std::vector<uint8_t>& payload
+) {
     clear();
-    uint8_t *buf = payload.data();
-    size_t len = payload.size();
-    CborParser parser;
-    CborValue it;
 
-    CborError err = cbor_parser_init(buf, len, 0, &parser, &it);
-    if (err != CborNoError) {
-        return false;
-    }
+    try {
+        CborParser parser;
+        CborValue root;
+        cbor::check(
+            cbor_parser_init(
+                payload.data(),
+                payload.size(),
+                0,
+                &parser,
+                &root
+            ),
+            "initialize GetAssertion parser"
+        );
 
-    if (!cbor_value_is_map(&it)) {
-        std::cerr << "Not a CBOR map!\n";
-        return false;
-    }
+        std::set<uint64_t> seen;
+        cbor::read_map(root, [&](CborValue& map) {
+            const uint64_t key = cbor::read_uint(map);
 
-    CborValue map;
-    cbor_value_enter_container(&it, &map);
+            if(!seen.insert(key).second)
+                throw cbor::Error("duplicate GetAssertion parameter");
 
-    while (!cbor_value_at_end(&map)) {
-        uint64_t key;
-        cbor_value_get_uint64(&map, &key);
-        cbor_value_advance_fixed(&map);
+            if(key < dispatch_table.size() && dispatch_table[key]) {
+                (this->*dispatch_table[key])(map);
+            } else {
+                cbor::skip(map);
+            }
+        });
 
-        if (key < dispatch_table.size() && dispatch_table[key]) {
-            if (!(this->*dispatch_table[key])(map))
-                return false;
-        } else {
-            std::cerr << "Unknown key in authenticatorGetAssertion map: " << key << "\n";
-            cbor_value_advance(&map);
+        constexpr std::array<uint64_t, 2> required{1, 2};
+        for(const uint64_t key : required) {
+            if(!seen.contains(key))
+                throw cbor::Error("missing required GetAssertion parameter");
         }
-    }
 
-    cbor_value_leave_container(&it, &map);
-    std::cout << "authenticatorGetAssertion parsing successful!\n";
-    return true;
+        cbor::require_complete(parser, root, "GetAssertion request");
+
+        return true;
+    } catch(const cbor::Error& error) {
+        std::cerr << "Invalid authenticatorGetAssertion request: "
+                  << error.what() << '\n';
+        clear();
+        return false;
+    }
 }

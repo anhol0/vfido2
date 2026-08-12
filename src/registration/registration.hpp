@@ -30,12 +30,13 @@ typedef struct UserEntity {
     void clear() {
         id.clear();
         name.clear();
+        displayName.clear();
     }
 } UserEntity;
 
 typedef struct PubKeyCredParam {
     std::string type;
-    int alg;
+    int alg = 0;
     void clear() {
         type.clear();
     }
@@ -55,20 +56,20 @@ class CTAPMakeCredentialRequest {
             {"up", true}
         };
         std::vector<uint8_t> pinAuth;
-        uint64_t pinProtocol;
+        uint64_t pinProtocol = 0;
         bool parseRequest(std::vector<uint8_t> &payload);
         std::vector<uint8_t> build_response(UHIDReport &r, std::stop_token stop);
     private:
-        bool parse_client_data_hash(CborValue &map);
-        bool parse_rp(CborValue &map);
-        bool parse_user(CborValue &map);
-        bool parse_pubkey_params(CborValue &map);
-        bool parse_exclude_list(CborValue &map);
-        bool parse_extensions(CborValue &map);
-        bool parse_options(CborValue &map);
-        bool parse_pin_auth(CborValue &map);
-        bool parse_pin_protocol(CborValue &map);
-        using ParseFn = bool (CTAPMakeCredentialRequest::*)(CborValue &value);
+        void parse_client_data_hash(CborValue &map); // Required
+        void parse_rp(CborValue &map);               // Required
+        void parse_user(CborValue &map);             // Required
+        void parse_pubkey_params(CborValue &map);    // Required
+        void parse_exclude_list(CborValue &map);     // Optional
+        void parse_extensions(CborValue &map);       // Optional
+        void parse_options(CborValue &map);          // Optional
+        void parse_pin_auth(CborValue &map);         // Optional
+        void parse_pin_protocol(CborValue &map);     // Optional
+        using ParseFn = void (CTAPMakeCredentialRequest::*)(CborValue &value);
         std::array<ParseFn, 10> dispatch_table = {
             nullptr,
             &CTAPMakeCredentialRequest::parse_client_data_hash,
@@ -84,6 +85,7 @@ class CTAPMakeCredentialRequest {
         void clear() {
             rp.clear();
             user.clear();
+            clientDataHash.clear();
             publicKeyCredParams.clear();
             options = {
                 {"rk", false},
@@ -92,5 +94,7 @@ class CTAPMakeCredentialRequest {
             };
             excludeList.clear();
             extensions.clear();
+            pinAuth.clear();
+            pinProtocol = 0;
         }
 };

@@ -1,43 +1,58 @@
 #include "registration/registration.hpp"
-#include <cstddef>
+
+#include <array>
+#include <cstdint>
 #include <iostream>
-#include <tinycbor/cbor.h>
+#include <set>
+
+#include "cbor_operations/cbor_utils.hpp"
 
 bool CTAPMakeCredentialRequest::parseRequest(
-        std::vector<uint8_t> &payload
+    std::vector<uint8_t>& payload
 ) {
     clear();
-    uint8_t *buf = payload.data();
-    size_t len = payload.size();
-    CborParser parser;
-    CborValue it;
 
-    CborError err = cbor_parser_init(buf, len, 0, &parser, &it);
-    if(err != CborNoError) {
+    try {
+        CborParser parser;
+        CborValue root;
+        cbor::check(
+            cbor_parser_init(
+                payload.data(),
+                payload.size(),
+                0,
+                &parser,
+                &root
+            ),
+            "initialize MakeCredential parser"
+        );
+
+        std::set<uint64_t> seen;
+        cbor::read_map(root, [&](CborValue& map) {
+            const uint64_t key = cbor::read_uint(map);
+
+            if(!seen.insert(key).second)
+                throw cbor::Error("duplicate MakeCredential parameter");
+
+            if(key < dispatch_table.size() && dispatch_table[key]) {
+                (this->*dispatch_table[key])(map);
+            } else {
+                cbor::skip(map);
+            }
+        });
+
+        constexpr std::array<uint64_t, 4> required{1, 2, 3, 4};
+        for(const uint64_t key : required) {
+            if(!seen.contains(key))
+                throw cbor::Error("missing required MakeCredential parameter");
+        }
+
+        cbor::require_complete(parser, root, "MakeCredential request");
+
+        return true;
+    } catch(const cbor::Error& error) {
+        std::cerr << "Invalid authenticatorMakeCredential request: "
+                  << error.what() << '\n';
+        clear();
         return false;
     }
-
-    if(!cbor_value_is_map(&it)) {
-        std::cerr << "Not a CBOR data!\n";
-        return false;
-    }
-
-    CborValue map;
-    cbor_value_enter_container(&it, &map);
-    while(!cbor_value_at_end(&map)) {
-        uint64_t key;
-        cbor_value_get_uint64(&map, &key);
-        cbor_value_advance_fixed(&map);
-        if(key < dispatch_table.size() && dispatch_table[key]) {
-            if(!(this->*dispatch_table[key])(map))
-                return false; 
-        } else {
-            std::cerr << "Unknown key in authenticatorMakeCredential map\n";
-            cbor_value_advance(&map);
-        } 
-    }
-
-    cbor_value_leave_container(&it, &map);
-    std::cout << "authenticatorMakeCredential parsing successful!\n";
-    return true; 
 }

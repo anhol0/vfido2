@@ -1,392 +1,259 @@
 #include "registration/registration.hpp"
-#include <iostream>
-#include <cstdint>
-#include <cstring>
-#include <sys/types.h>
-#include <tinycbor/cbor.h>
-#include <vector>
 
-bool CTAPMakeCredentialRequest::parse_client_data_hash(CborValue &map) {
-    size_t len;
-    CborError err = cbor_value_calculate_string_length(&map, &len);
-    if (err != CborNoError) {
-        std::cerr << "Failed to calculate client_data_hash length\n";
-        return false;
-    }
-    clientDataHash.resize(len);
-    err = cbor_value_copy_byte_string(&map, clientDataHash.data(), &len, &map);
-
-    if(err != CborNoError) {
-        std::cerr << "Failed to parse clientDataHash\n";
-        return false;
-    }
-
-    if(len != 32) {
-        std::cerr << "Incorrect clientDataHash len\n";
-        return false;
-    }
-    std::cout << "clientDataHash parsing successful!\n";
-    return true;
-}
-
-bool CTAPMakeCredentialRequest::parse_rp(CborValue &map) {
-    CborValue rpMap;
-    cbor_value_enter_container(&map, &rpMap);
-
-    while(!cbor_value_at_end(&rpMap)) {
-        // Calculating and getting key length
-        size_t keyLen;
-
-        CborError err = cbor_value_calculate_string_length(&rpMap, &keyLen);
-        if(err != CborNoError) {
-            std::printf("Error calculating key length\n");
-            return false;
-        }
-
-        std::vector<char> subkey(keyLen + 1);
-
-        cbor_value_copy_text_string(&rpMap, subkey.data(), &keyLen, &rpMap);
-
-        std::string strkey(subkey.data(), keyLen);
-
-        // Calculating and getting value length
-        size_t len;
-        err = cbor_value_calculate_string_length(&rpMap, &len);
-        if(err != CborNoError) {
-            std::printf("Error calculating value length\n");
-            return false;
-        }
-        std::vector<char> str(len + 1);
-        cbor_value_copy_text_string(&rpMap, str.data(), &len, &rpMap);
-
-        if(strkey == "id") {
-            rp.id.assign(str.data(), len);
-            std::cout << "RP ID = " << rp.id << "\n";
-        } else if(strkey == "name") {
-            rp.name.assign(str.data(), len);
-            std::cout << "RP NAME = " << rp.name << "\n";
-        } else {
-            std::cerr << "Incorrect ID in Relying Party map: " << strkey << ", skipping\n";
-            cbor_value_advance(&rpMap);
-        }
-    }
-
-    cbor_value_leave_container(&map, &rpMap);
-    std::cout << "RP parsing successful!\n";
-    return true;
-}
-
-// Parsing user
-bool CTAPMakeCredentialRequest::parse_user(CborValue &map) {
-    CborValue userMap;
-    cbor_value_enter_container(&map, &userMap);
-
-    while(!cbor_value_at_end(&userMap)) {
-        // Key and Key Length
-        size_t keyLen;
-
-        CborError err = cbor_value_calculate_string_length(&userMap, &keyLen);
-        if(err != CborNoError) {
-             std::printf("Error calculating key length\n");
-            return false;
-        }
-
-        std::vector<char> subkey(keyLen + 1);
-
-        cbor_value_copy_text_string(&userMap, subkey.data(), &keyLen, &userMap);
-        std::string strkey(subkey.data(), keyLen);
-
-
-        // Values and Value length due to variable size
-        size_t len;
-        // Calculating value length
-        err = cbor_value_calculate_string_length(&userMap, &len);
-        std::cout << "Data len: " << len << "\n";
-        if(err != CborNoError) {
-             std::printf("Error calculating value length\n");
-            return false;
-        }
-
-        if(strkey == "id") {
-            std::vector<uint8_t> id(len);
-            cbor_value_copy_byte_string(&userMap, id.data(), &len, &userMap);
-            user.id.insert(user.id.end(), id.begin(), id.begin()+len);
-        } else if(strkey == "name") {
-            std::vector<char> name(len + 1);
-            cbor_value_copy_text_string(&userMap, name.data(), &len, &userMap);
-            std::cout << "Name = " << name.data() << std::endl;
-            user.name.assign(name.data(), len);
-        } else if(strkey == "displayName") {
-            std::vector<char> displayName(len + 1);
-            cbor_value_copy_text_string(&userMap, displayName.data(), &len, &userMap);
-            std::cout << "Display Name = " << std::string(displayName.data(), len) << std::endl;
-            user.displayName.assign(displayName.data(), len);
-        } else {
-            std::cerr << "Incorrect ID in User map: " << strkey << ", skipping\n";
-            cbor_value_advance(&userMap);
-        }
-    }
-    cbor_value_leave_container(&map, &userMap);
-    std::cout << "User parsing successful!\n";
-    return true;
-}
-
-bool CTAPMakeCredentialRequest::parse_pubkey_params(CborValue &map) {
-    CborValue arr;
-    cbor_value_enter_container(&map, &arr);
-
-    while(!cbor_value_at_end(&arr)) {
-        CborValue item;
-        cbor_value_enter_container(&arr, &item);
-
-        PubKeyCredParam p;
-        while(!cbor_value_at_end(&item)) {
-            size_t keyLen;
-
-            CborError err = cbor_value_calculate_string_length(&item, &keyLen);
-            if(err != CborNoError) {
-                 std::printf("Error calculating key length\n");
-                return false;
-            }
-
-            std::vector<char> subkey(keyLen + 1);
-
-            cbor_value_copy_text_string(&item, subkey.data(), &keyLen, &item);
-
-            std::string strkey(subkey.data(), keyLen);
-
-            if(strkey == "type") {
-                size_t len;
-
-                CborError err = cbor_value_calculate_string_length(&item, &len);
-
-                if(err != CborNoError) {
-                     std::printf("Error calculating key length\n");
-                    return false;
-                }
-
-                std::vector<char> type(len + 1);
-
-                cbor_value_copy_text_string(&item, type.data(), &len, &item);
-                p.type.assign(type.data(), len);
-            } else if(strkey =="alg") {
-                cbor_value_get_int(&item, &p.alg);
-                cbor_value_advance_fixed(&item);
-            } else {
-                std::cerr << "Incorrect ID in Public Key Parameters map: " << strkey << ", skipping\n";
-                cbor_value_advance(&item);
-            }
-
-        }
-        publicKeyCredParams.push_back(p);
-        cbor_value_leave_container(&arr, &item);
-    }
-    cbor_value_leave_container(&map, &arr);
-    std::cout << "PubKeyParam parsing successful!\n";
-    return true;
-}
-
-bool CTAPMakeCredentialRequest::parse_exclude_list(CborValue &map) {
-    CborValue arr;
-    cbor_value_enter_container(&map, &arr);
-
-    while(!cbor_value_at_end(&arr)) {
-        CborValue item;
-        cbor_value_enter_container(&arr, &item);
-
-        PublicKeyCredentialDescriptor d;
-        while(!cbor_value_at_end(&item)) {
-            size_t keyLen;
-
-            CborError err = cbor_value_calculate_string_length(&item, &keyLen);
-            if(err != CborNoError) {
-                 std::printf("Error calculating key length\n");
-                return false;
-            }
-
-            std::vector<char> subkey(keyLen + 1);
-
-            cbor_value_copy_text_string(&item, subkey.data(), &keyLen, &item);
-
-            std::string strkey(subkey.data(), keyLen);
-
-            if(strkey == "type") {
-                size_t len;
-
-                CborError err = cbor_value_calculate_string_length(&item, &len);
-
-                if(err != CborNoError) {
-                     std::printf("Error calculating key length\n");
-                    return false;
-                }
-
-                std::vector<char> type(len + 1);
-
-                cbor_value_copy_text_string(&item, type.data(), &len, &item);
-                d.type.assign(type.data(), len);
-            } else if(strkey =="id") {
-                size_t len;
-                CborError err = cbor_value_calculate_string_length(&item, &len);
-                if(err != CborNoError) {
-                     std::printf("Error calculating key length\n");
-                    return false;
-                }
-                std::vector<uint8_t> id_buf(len);
-                cbor_value_copy_byte_string(&item, id_buf.data(), &len, &item);
-                d.id.insert(d.id.end(), id_buf.begin(), id_buf.begin()+len);
-            } else if(strkey == "transports") {
-                CborValue transport;
-                cbor_value_enter_container(&item, &transport);
-                while(!cbor_value_at_end(&transport)) {
-                    size_t tlen;
-
-                    CborError err = cbor_value_calculate_string_length(&transport, &tlen);
-
-                    if(err != CborNoError) {
-                        std::cerr << "Error parsing exclude list transport options";
-                        return false;
-                    }
-
-                    std::vector<char> string(tlen + 1);
-                    cbor_value_copy_text_string(&transport, string.data(), &tlen, &transport);
-                    d.transports.push_back(std::string(string.data(), tlen));
-                }
-                cbor_value_leave_container(&item, &transport);
-            } else {
-                std::cerr << "Incorrect key in Exclude List map: " << strkey << ", skipping\n";
-                cbor_value_advance(&item);
-            }
-
-        }
-        excludeList.push_back(d);
-        cbor_value_leave_container(&arr, &item);
-    }
-    cbor_value_leave_container(&map, &arr);
-    std::cout << "Exclude list parsing successful!\n";
-    return true;
-}
-
-bool CTAPMakeCredentialRequest::parse_extensions(CborValue &map) {
-    CborValue extMap;
-    cbor_value_enter_container(&map, &extMap);
-
-    while(!cbor_value_at_end(&extMap)) {
-
-        size_t keyLen;
-        cbor_value_calculate_string_length(&extMap, &keyLen);
-
-        std::vector<char> key(keyLen + 1);
-
-        cbor_value_copy_text_string(&extMap, key.data(), &keyLen, &extMap);
-
-        std::string extName(key.data(), keyLen);
-
-        ExtensionValue ext;
-
-        if(cbor_value_is_boolean(&extMap)) {
-
-            bool v;
-            cbor_value_get_boolean(&extMap, &v);
-
-            ext.type = Type::Bool;
-            ext.value = v;
-
-            cbor_value_advance_fixed(&extMap);
-
-        } else if(cbor_value_is_integer(&extMap)) {
-
-            int64_t v;
-            cbor_value_get_int64(&extMap, &v);
-
-            ext.type = Type::Int;
-            ext.value = v;
-
-            cbor_value_advance_fixed(&extMap);
-
-        } else if(cbor_value_is_text_string(&extMap)) {
-
-            size_t len;
-            cbor_value_calculate_string_length(&extMap, &len);
-
-            std::vector<char> str(len + 1);
-
-            cbor_value_copy_text_string(
-                &extMap,
-                str.data(),
-                &len,
-                &extMap
+#include <limits>
+#include <optional>
+#include <set>
+#include <string>
+#include <string_view>
+#include <utility>
+
+#include "cbor_operations/cbor_utils.hpp"
+
+namespace {
+    constexpr std::size_t CLIENT_DATA_HASH_LENGTH = 32;
+    constexpr std::size_t MAX_RP_ID_LENGTH = 253;
+    constexpr std::size_t MAX_ENTITY_TEXT_LENGTH = 64;
+    constexpr std::size_t MAX_USER_ID_LENGTH = 64;
+    constexpr std::size_t MAX_CREDENTIAL_ID_LENGTH = 7609;
+    constexpr std::size_t MAX_EXTENSION_NAME_LENGTH = 64;
+    constexpr std::size_t MAX_EXTENSION_VALUE_LENGTH = 7609;
+    constexpr std::size_t MAX_TRANSPORT_NAME_LENGTH = 32;
+    constexpr std::size_t MAX_PIN_AUTH_LENGTH = 64;
+
+    void require_unique(
+        std::set<std::string>& seen,
+        const std::string& key,
+        std::string_view context
+    ) {
+        if(!seen.insert(key).second) {
+            throw cbor::Error(
+                "duplicate " + std::string(context) + " member: " + key
             );
-
-            ext.type = Type::String;
-            ext.value = std::string(str.data(), len);
-
-        } else if(cbor_value_is_byte_string(&extMap)) {
-
-            size_t len;
-            cbor_value_calculate_string_length(&extMap, &len);
-
-            std::vector<uint8_t> bytes(len);
-
-            cbor_value_copy_byte_string(&extMap, bytes.data(), &len, &extMap);
-
-            ext.type = Type::Bytes;
-            ext.value = bytes;
         }
-        else {
-            std::cerr << "Unsupported extension type\n";
-            return false;
-        }
-
-        extensions[extName] = ext;
     }
 
-    cbor_value_leave_container(&map, &extMap);
-    std::cout << "Extensions parsing successful!\n";
-    return true;
-}
+    std::optional<ExtensionValue> read_extension_value(CborValue& value) {
+        ExtensionValue extension;
 
-bool CTAPMakeCredentialRequest::parse_options(CborValue &map) {
-    CborValue optMap;
-    cbor_value_enter_container(&map, &optMap);
-    while(!cbor_value_at_end(&optMap)) {
-        size_t keyLen;
-        CborError err = cbor_value_calculate_string_length(&optMap, &keyLen);
-        if(err != CborNoError) {
-            std::cerr << "Error calculating key length\n";
-            return false;
-        }
-        std::vector<char> keyBuf(keyLen + 1);
-        cbor_value_copy_text_string(&optMap, keyBuf.data(), &keyLen, &optMap);
-        std::string strkey(keyBuf.data(), keyLen);
-        if(strkey == "rk" || strkey == "up" || strkey == "uv") {
-            bool value;
-            cbor_value_get_boolean(&optMap, &value);
-            cbor_value_advance_fixed(&optMap);
-            options[strkey] = value;
-#ifdef DEBUG
-            std::cout << "Known option found: " << strkey << ": " << value << std::endl;
-#endif
+        if(cbor_value_is_boolean(&value)) {
+            extension.type = Type::Bool;
+            extension.value = cbor::read_bool(value);
+        } else if(cbor_value_is_integer(&value)) {
+            extension.type = Type::Int;
+            extension.value = cbor::read_int(value);
+        } else if(cbor_value_is_text_string(&value)) {
+            extension.type = Type::String;
+            extension.value = cbor::read_text(
+                value,
+                MAX_EXTENSION_VALUE_LENGTH
+            );
+        } else if(cbor_value_is_byte_string(&value)) {
+            extension.type = Type::Bytes;
+            extension.value = cbor::read_bytes(
+                value,
+                MAX_EXTENSION_VALUE_LENGTH
+            );
         } else {
-            std::cerr << "Unknown option for Option map!\n";
-            cbor_value_advance(&optMap);
+            // This authenticator does not implement structured extensions yet.
+            // Unknown extension inputs are ignored, but still consumed.
+            cbor::skip(value);
+            return std::nullopt;
         }
+
+        return extension;
     }
-    std::cout << "Options parsing successful!\n";
-    cbor_value_leave_container(&map, &optMap);
-    return true;
+
+    PublicKeyCredentialDescriptor read_credential_descriptor(
+        CborValue& value
+    ) {
+        PublicKeyCredentialDescriptor descriptor;
+        std::set<std::string> seen;
+
+        cbor::read_map(value, [&](CborValue& map) {
+            const std::string key = cbor::read_text(
+                map,
+                MAX_ENTITY_TEXT_LENGTH
+            );
+            require_unique(seen, key, "credential descriptor");
+
+            if(key == "type") {
+                descriptor.type = cbor::read_text(
+                    map,
+                    MAX_ENTITY_TEXT_LENGTH
+                );
+            } else if(key == "id") {
+                descriptor.id = cbor::read_bytes(
+                    map,
+                    MAX_CREDENTIAL_ID_LENGTH
+                );
+            } else if(key == "transports") {
+                cbor::read_array(map, [&](CborValue& transports) {
+                    descriptor.transports.push_back(cbor::read_text(
+                        transports,
+                        MAX_TRANSPORT_NAME_LENGTH
+                    ));
+                });
+            } else {
+                cbor::skip(map);
+            }
+        });
+
+        if(
+            !seen.contains("type") ||
+            !seen.contains("id") ||
+            descriptor.type.empty() ||
+            descriptor.id.empty()
+        ) {
+            throw cbor::Error(
+                "credential descriptor is missing a non-empty type or id"
+            );
+        }
+
+        return descriptor;
+    }
 }
 
-bool CTAPMakeCredentialRequest::parse_pin_auth(CborValue &map) {
-    size_t size;
-    cbor_value_calculate_string_length(&map, &size);
-    std::vector<uint8_t> cdhTrunc(size);
-    cbor_value_copy_byte_string(&map, cdhTrunc.data(), &size, &map);
-    std::cout << "PinAuth parsing successful!\n";
-    return true;
+void CTAPMakeCredentialRequest::parse_client_data_hash(CborValue& value) {
+    clientDataHash = cbor::read_bytes(value, CLIENT_DATA_HASH_LENGTH);
+    if(clientDataHash.size() != CLIENT_DATA_HASH_LENGTH)
+        throw cbor::Error("clientDataHash must contain exactly 32 bytes");
 }
 
-bool CTAPMakeCredentialRequest::parse_pin_protocol(CborValue &map) {
-    cbor_value_get_uint64(&map, &pinProtocol);
-    cbor_value_advance_fixed(&map);
-    return true;
+void CTAPMakeCredentialRequest::parse_rp(CborValue& value) {
+    std::set<std::string> seen;
+
+    cbor::read_map(value, [&](CborValue& map) {
+        const std::string key = cbor::read_text(
+            map,
+            MAX_ENTITY_TEXT_LENGTH
+        );
+        require_unique(seen, key, "relying-party entity");
+
+        if(key == "id") {
+            rp.id = cbor::read_text(map, MAX_RP_ID_LENGTH);
+        } else if(key == "name") {
+            rp.name = cbor::read_text(map, MAX_ENTITY_TEXT_LENGTH);
+        } else {
+            cbor::skip(map);
+        }
+    });
+
+    if(!seen.contains("id") || rp.id.empty())
+        throw cbor::Error("relying-party entity is missing a non-empty id");
+}
+
+void CTAPMakeCredentialRequest::parse_user(CborValue& value) {
+    std::set<std::string> seen;
+
+    cbor::read_map(value, [&](CborValue& map) {
+        const std::string key = cbor::read_text(
+            map,
+            MAX_ENTITY_TEXT_LENGTH
+        );
+        require_unique(seen, key, "user entity");
+
+        if(key == "id") {
+            user.id = cbor::read_bytes(map, MAX_USER_ID_LENGTH);
+        } else if(key == "name") {
+            user.name = cbor::read_text(map, MAX_ENTITY_TEXT_LENGTH);
+        } else if(key == "displayName") {
+            user.displayName = cbor::read_text(
+                map,
+                MAX_ENTITY_TEXT_LENGTH
+            );
+        } else {
+            cbor::skip(map);
+        }
+    });
+
+    if(!seen.contains("id"))
+        throw cbor::Error("user entity is missing id");
+}
+
+void CTAPMakeCredentialRequest::parse_pubkey_params(CborValue& value) {
+    cbor::read_array(value, [&](CborValue& array) {
+        PubKeyCredParam parameter;
+        std::set<std::string> seen;
+
+        cbor::read_map(array, [&](CborValue& map) {
+            const std::string key = cbor::read_text(
+                map,
+                MAX_ENTITY_TEXT_LENGTH
+            );
+            require_unique(seen, key, "public-key parameter");
+
+            if(key == "type") {
+                parameter.type = cbor::read_text(
+                    map,
+                    MAX_ENTITY_TEXT_LENGTH
+                );
+            } else if(key == "alg") {
+                const int64_t algorithm = cbor::read_int(map);
+                if(
+                    algorithm < std::numeric_limits<int>::min() ||
+                    algorithm > std::numeric_limits<int>::max()
+                ) {
+                    throw cbor::Error("public-key algorithm is out of range");
+                }
+                parameter.alg = static_cast<int>(algorithm);
+            } else {
+                cbor::skip(map);
+            }
+        });
+
+        if(!seen.contains("type") || !seen.contains("alg")) {
+            throw cbor::Error(
+                "public-key parameter is missing type or alg"
+            );
+        }
+
+        publicKeyCredParams.push_back(std::move(parameter));
+    });
+}
+
+void CTAPMakeCredentialRequest::parse_exclude_list(CborValue& value) {
+    cbor::read_array(value, [&](CborValue& array) {
+        excludeList.push_back(read_credential_descriptor(array));
+    });
+}
+
+void CTAPMakeCredentialRequest::parse_extensions(CborValue& value) {
+    std::set<std::string> seen;
+
+    cbor::read_map(value, [&](CborValue& map) {
+        const std::string name = cbor::read_text(
+            map,
+            MAX_EXTENSION_NAME_LENGTH
+        );
+        require_unique(seen, name, "extension");
+
+        if(auto extension = read_extension_value(map))
+            extensions.emplace(name, std::move(*extension));
+    });
+}
+
+void CTAPMakeCredentialRequest::parse_options(CborValue& value) {
+    std::set<std::string> seen;
+
+    cbor::read_map(value, [&](CborValue& map) {
+        const std::string name = cbor::read_text(
+            map,
+            MAX_ENTITY_TEXT_LENGTH
+        );
+        require_unique(seen, name, "option");
+
+        if(name == "rk" || name == "up" || name == "uv") {
+            options[name] = cbor::read_bool(map);
+        } else {
+            cbor::skip(map);
+        }
+    });
+}
+
+void CTAPMakeCredentialRequest::parse_pin_auth(CborValue& value) {
+    pinAuth = cbor::read_bytes(value, MAX_PIN_AUTH_LENGTH);
+}
+
+void CTAPMakeCredentialRequest::parse_pin_protocol(CborValue& value) {
+    pinProtocol = cbor::read_uint(value);
 }
