@@ -33,3 +33,23 @@ add_test(
     NAME request_parsing
     COMMAND request_parsing_tests
 )
+
+add_executable(crypto_tests
+    crypto_test.cpp
+    ${PROJECT_SOURCE_DIR}/src/cryptography/crypto.cpp
+    ${PROJECT_SOURCE_DIR}/src/credentials/credential.cpp
+)
+
+target_include_directories(crypto_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/src
+    ${OPENSSL_INCLUDE_DIRS}
+)
+
+target_link_libraries(crypto_tests PRIVATE
+    ${OPENSSL_LIBRARIES}
+)
+
+add_test(
+    NAME crypto
+    COMMAND crypto_tests
+)

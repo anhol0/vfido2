@@ -1,13 +1,12 @@
 #pragma once
 
+#include <filesystem>
 #include <sys/types.h>
 #include <string>
 #include <unordered_map>
 #include <vector>
 #include <cstdint>
 #include <vector>
-
-static const std::string CRED_STORE_PATH="/etc/vfido2/cred.json";
 
 typedef struct PublicKeyCredentialDescriptor {
     std::string type;
@@ -30,7 +29,8 @@ typedef struct StoredCredential {
 
 class CredentialStore {
     public:
-        void init();
+        using Key = const std::vector<uint8_t>;
+        CredentialStore(std::filesystem::path path, Key key);
         void load();
         void save();
 
@@ -46,6 +46,7 @@ class CredentialStore {
         std::unordered_map<std::string, StoredCredential> stored_;
         std::vector<uint8_t> decrypt(std::vector<uint8_t> &ciphertext);
         std::vector<uint8_t> encrypt(std::vector<uint8_t> &plaintext);
-        std::vector<uint8_t> storeKey_;
+        std::filesystem::path storePath_;
+        Key storeKey_;
         int signCounter = 0;
 };

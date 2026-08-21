@@ -5,7 +5,6 @@
 #include <sys/types.h>
 #include <tss2/tss2_esys.h>
 #include <vector>
-#include <openssl/rand.h>
 #include <openssl/ec.h>
 
 #include "cancellation.hpp"
@@ -108,7 +107,7 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(UHIDReport &r, st
     // Building Attested Credential data
     std::vector<uint8_t> authData;
     std::vector<uint8_t> credId(32);
-    RAND_bytes(credId.data(), credId.size());
+    openssl_random_bytes(credId);
     uint16_t credIdLen = (uint16_t)credId.size();
     uint8_t credIdLenBytes[2] = {
         (uint8_t)(credIdLen >> 8),

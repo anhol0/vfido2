@@ -203,7 +203,7 @@ CTAPPacket handle_cbor(UHIDReport &request, std::stop_token stop) {
 
             try {
                 payload = gar.build_response(request, stop);
-            } catch (const OperationCancelled&) {
+            } catch (const OperationCancelled &e) {
                 gar.clear();
                 throw;
             } catch (const std::exception& e) {

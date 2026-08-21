@@ -1,5 +1,5 @@
 #include "credential.hpp"
-#include "cryptography/tpm.hpp"
+#include "cryptography/crypto.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -10,26 +10,19 @@
 #include <iostream>
 // #include <format>
 #include <nlohmann/detail/value_t.hpp>
-#include <openssl/evp.h>
-#include <openssl/rand.h>
 #include <stdexcept>
 #include <string>
 #include <sys/types.h>
 #include <nlohmann/json.hpp>
 #include <vector>
 
-void CredentialStore::init() {
-    storeKey_ = get_or_create_store_key();
-    // std::cout << "storeKey_: ";
-    // for (auto byte : storeKey_) {
-    //     std::cout << std::format("{:02x}", byte);
-    // }
-    // std::cout << "\n";
-    load();
+CredentialStore::CredentialStore(std::filesystem::path path, Key key) : storePath_(path), storeKey_(key) {
+    if(storeKey_.size() != 32) {
+        throw std::invalid_argument("Credential store key must be 32 bytes");
+    }
 }
 
 // Hex conversions
-
 std::string CredentialStore::toHex(const std::vector<uint8_t> &v) const {
     std::string s;
     s.reserve(v.size() * 2);
@@ -51,48 +44,114 @@ std::vector<uint8_t> CredentialStore::fromHex(const std::string &s) {
     return v;
 }
 
+// Cryptography
 std::vector<uint8_t> CredentialStore::decrypt(std::vector<uint8_t> &ciphertext) {
     if(ciphertext.size() < 28) throw std::runtime_error("Ciphertext is too short");
     const uint8_t *iv = ciphertext.data();
     const uint8_t *tag = ciphertext.data() + 12;
     const uint8_t *cipher = ciphertext.data() + 28;
-    int ctlen = ciphertext.size() - 28;
+    const int ctlen = openssl_checked_size(
+        ciphertext.size() - 28,
+        "credential ciphertext"
+    );
 
-    EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
-    EVP_DecryptInit_ex(ctx, EVP_aes_256_gcm(), nullptr, nullptr, nullptr);
-    EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, 12, nullptr);
-    EVP_DecryptInit_ex(ctx, nullptr, nullptr, storeKey_.data(), iv);
-    EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, 16, (void *)tag);
+    auto context = openssl_make_cipher_context();
+    openssl_check(
+        EVP_DecryptInit_ex(
+            context.get(), EVP_aes_256_gcm(), nullptr, nullptr, nullptr
+        ),
+        "EVP_DecryptInit_ex"
+    );
+    openssl_check(
+        EVP_CIPHER_CTX_ctrl(
+            context.get(), EVP_CTRL_GCM_SET_IVLEN, 12, nullptr
+        ),
+        "EVP_CTRL_GCM_SET_IVLEN"
+    );
+    openssl_check(
+        EVP_DecryptInit_ex(
+            context.get(), nullptr, nullptr, storeKey_.data(), iv
+        ),
+        "EVP_DecryptInit_ex key and IV"
+    );
+    openssl_check(
+        EVP_CIPHER_CTX_ctrl(
+            context.get(),
+            EVP_CTRL_GCM_SET_TAG,
+            16,
+            const_cast<uint8_t *>(tag)
+        ),
+        "EVP_CTRL_GCM_SET_TAG"
+    );
 
-    std::vector<uint8_t> plain(ctlen);
+    std::vector<uint8_t> plain(
+        static_cast<std::size_t>(ctlen) + EVP_MAX_BLOCK_LENGTH
+    );
     int outl = 0;
-    EVP_DecryptUpdate(ctx, plain.data(), &outl, cipher, ctlen);
+    openssl_check(
+        EVP_DecryptUpdate(
+            context.get(), plain.data(), &outl, cipher, ctlen
+        ),
+        "EVP_DecryptUpdate"
+    );
     int finlen = 0;
-    if(!EVP_DecryptFinal_ex(ctx, plain.data() + outl, &finlen)) throw std::runtime_error("GCM auth tag mismatch!");
-    EVP_CIPHER_CTX_free(ctx);
+    openssl_check(
+        EVP_DecryptFinal_ex(context.get(), plain.data() + outl, &finlen),
+        "EVP_DecryptFinal_ex (GCM authentication failed)"
+    );
 
-    // if(finlen <= 0) throw std::runtime_error("GCM auth tag mismatch!");
     plain.resize(outl + finlen);
     return plain;
 }
 
 std::vector<uint8_t> CredentialStore::encrypt(std::vector<uint8_t> &plaintext) {
     std::vector<uint8_t> iv(12);
-    RAND_bytes(iv.data(), iv.size());
-    EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
-    EVP_EncryptInit_ex(ctx, EVP_aes_256_gcm(), nullptr, nullptr, nullptr);
-    EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, 12, nullptr);
-    EVP_EncryptInit_ex(ctx, nullptr, nullptr, storeKey_.data(), iv.data());
+    openssl_random_bytes(iv);
+    auto context = openssl_make_cipher_context();
+    openssl_check(
+        EVP_EncryptInit_ex(
+            context.get(), EVP_aes_256_gcm(), nullptr, nullptr, nullptr
+        ),
+        "EVP_EncryptInit_ex"
+    );
+    openssl_check(
+        EVP_CIPHER_CTX_ctrl(
+            context.get(), EVP_CTRL_GCM_SET_IVLEN, 12, nullptr
+        ),
+        "EVP_CTRL_GCM_SET_IVLEN"
+    );
+    openssl_check(
+        EVP_EncryptInit_ex(
+            context.get(), nullptr, nullptr, storeKey_.data(), iv.data()
+        ),
+        "EVP_EncryptInit_ex key and IV"
+    );
 
-    std::vector<uint8_t> cipher(plaintext.size());
+    std::vector<uint8_t> cipher(plaintext.size() + EVP_MAX_BLOCK_LENGTH);
     int outl = 0;
-    EVP_EncryptUpdate(ctx, cipher.data(), &outl, plaintext.data(), plaintext.size());
+    openssl_check(
+        EVP_EncryptUpdate(
+            context.get(),
+            cipher.data(),
+            &outl,
+            plaintext.data(),
+            openssl_checked_size(plaintext.size(), "credential plaintext")
+        ),
+        "EVP_EncryptUpdate"
+    );
     int final_len = 0;
-    EVP_EncryptFinal_ex(ctx, cipher.data() + outl, &final_len);
+    openssl_check(
+        EVP_EncryptFinal_ex(context.get(), cipher.data() + outl, &final_len),
+        "EVP_EncryptFinal_ex"
+    );
 
     std::vector<uint8_t> tag(16);
-    EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, 16, tag.data());
-    EVP_CIPHER_CTX_free(ctx);
+    openssl_check(
+        EVP_CIPHER_CTX_ctrl(
+            context.get(), EVP_CTRL_GCM_GET_TAG, 16, tag.data()
+        ),
+        "EVP_CTRL_GCM_GET_TAG"
+    );
 
     std::vector<uint8_t> out;
     out.insert(out.end(), iv.begin(), iv.end());
@@ -122,9 +181,9 @@ void CredentialStore::save() {
     std::vector<uint8_t> plain(plaintext.begin(), plaintext.end());
     auto encrypted = encrypt(plain);
     std::filesystem::create_directories(
-            std::filesystem::path(CRED_STORE_PATH).parent_path()
+            std::filesystem::path(storePath_).parent_path()
     );
-    std::ofstream f(CRED_STORE_PATH, std::ios::binary);
+    std::ofstream f(storePath_, std::ios::binary);
     if(!f) throw std::runtime_error("Cannot open file for writing");
     f.write((char*)encrypted.data(), encrypted.size());
 }
@@ -132,9 +191,9 @@ void CredentialStore::save() {
 void CredentialStore::load() {
     using namespace nlohmann;
     stored_.clear();
-    if(!std::filesystem::exists(CRED_STORE_PATH)) return;
+    if(!std::filesystem::exists(storePath_)) return;
 
-    std::ifstream f(CRED_STORE_PATH, std::ios::binary);
+    std::ifstream f(storePath_, std::ios::binary);
     std::vector<uint8_t> enc_blob(
             (std::istreambuf_iterator<char>(f)),
             std::istreambuf_iterator<char>()

@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdint.h>
 
+#include "cryptography/tpm.hpp"
 #include "device.hpp"
 #include "event.hpp"
 #include "credentials/credential.hpp"
@@ -10,14 +11,17 @@
 // It is only utilized when getAssertion and makeCredential requests are sent.
 // There can't be multiple concurrent operations of this type by the specification of CTAPHID protocol
 // It is totally safe to leave it as is
-CredentialStore store;
+CredentialStore store{
+    "/etc/vfido2/cred.bin",
+    get_or_create_store_key()
+};
 
 int main() {
     // Device can be local since it is only used in the main event loop
     // Only run() method is responsible for dealing with FIDODevice
     FIDODevice device;
     device.init();
-    store.init();
+    store.load();
     printf("UHID device created\n");
     run(device);
     return 0;

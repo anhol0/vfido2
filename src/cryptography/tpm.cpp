@@ -1,4 +1,5 @@
 #include "tpm.hpp"
+#include "crypto.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdlib>
@@ -318,16 +319,32 @@ std::vector<uint8_t> sign
     EsysUniquePtr<TPMT_SIGNATURE> signature(signatureRaw);
 
     // Encoding into ASN.1 DER format
-    ECDSA_SIG *ecdsaSignature = ECDSA_SIG_new();
+    auto ecdsaSignature = openssl_make_ecdsa_signature();
+    auto r = openssl_make_big_number({
+        signature->signature.ecdsa.signatureR.buffer,
+        signature->signature.ecdsa.signatureR.size
+    });
+    auto s = openssl_make_big_number({
+        signature->signature.ecdsa.signatureS.buffer,
+        signature->signature.ecdsa.signatureS.size
+    });
+    openssl_check(
+        ECDSA_SIG_set0(ecdsaSignature.get(), r.get(), s.get()),
+        "ECDSA_SIG_set0"
+    );
 
-    BIGNUM *r_bn = BN_bin2bn(signature->signature.ecdsa.signatureR.buffer, signature->signature.ecdsa.signatureR.size, nullptr);
-    BIGNUM *s_bn = BN_bin2bn(signature->signature.ecdsa.signatureS.buffer, signature->signature.ecdsa.signatureS.size, nullptr);
-    ECDSA_SIG_set0(ecdsaSignature, r_bn, s_bn);
-    int der_len = i2d_ECDSA_SIG(ecdsaSignature, nullptr);
+    (void)r.release();
+    (void)s.release();
+
+    const int der_len = i2d_ECDSA_SIG(ecdsaSignature.get(), nullptr);
+    openssl_check_positive(der_len, "i2d_ECDSA_SIG size");
     std::vector<uint8_t> der_signature(der_len);
     uint8_t* p = der_signature.data();
-    i2d_ECDSA_SIG(ecdsaSignature, &p);
-    ECDSA_SIG_free(ecdsaSignature);
+    const int encoded_len = i2d_ECDSA_SIG(ecdsaSignature.get(), &p);
+    openssl_check_positive(encoded_len, "i2d_ECDSA_SIG encode");
+    if(encoded_len != der_len) {
+        throw std::runtime_error("i2d_ECDSA_SIG returned an inconsistent length");
+    }
 
     // RAII Guards automatically free pointers and calling Esys_FlushContext
     return der_signature;

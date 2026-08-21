@@ -310,12 +310,14 @@ void run(FIDODevice &device) {
                             };
                             try {
                                 result.packet = execute_ctap_request(std::move(request), stop);
-                            } catch (const OperationCancelled&) {
+                            } catch (const OperationCancelled &e) {
+                                std::cout << "Exception: " <<  e.what() << std::endl;
                                 result.packet = make_cbor_error(
                                     result.cid,
                                     CTAPError::CTAP2_ERR_KEEPALIVE_CANCEL
                                 );
                             } catch (const std::exception &e) {
+                                std::cout << "Exception: " << e.what() << std::endl;
                                 result.packet = make_cbor_error(
                                     result.cid,
                                     CTAPError::CTAP1_ERR_OTHER
