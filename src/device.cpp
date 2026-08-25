@@ -7,6 +7,7 @@
 #include <linux/uhid.h>
 #include <stdexcept>
 #include <stop_token>
+#include <system_error>
 #include <unistd.h>
 
 FIDODevice::FIDODevice() :
@@ -57,7 +58,7 @@ void FIDODevice::init() {
 
     int n = write(fd, &ev, sizeof(ev));
     if(n < 0) {
-        throw std::runtime_error("Error writing to /dev/uhid");
+        throw std::system_error(errno, std::generic_category(), "Error writing to /dev/uhid");
     }
 }
 
