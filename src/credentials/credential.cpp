@@ -1,33 +1,335 @@
 #include "credential.hpp"
 #include "cryptography/crypto.hpp"
+#include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <cstring>
 #include <fcntl.h>
 #include <filesystem>
 #include <fstream>
-#include <ios>
 #include <iterator>
-#include <iostream>
 #include <limits>
-#include <nlohmann/detail/exceptions.hpp>
-#include <nlohmann/detail/value_t.hpp>
-#include <nlohmann/json_fwd.hpp>
-#include <ostream>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
-#include <sys/types.h>
+#include <system_error>
 #include <nlohmann/json.hpp>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <unistd.h>
 #include <unordered_map>
 #include <utility>
 #include <vector>
-#include <ext/stdio_filebuf.h>
 
 namespace {
+
+class UniqueFd {
+public:
+    explicit UniqueFd(int fd = -1) noexcept : fd_(fd) {}
+
+    ~UniqueFd() {
+        if(fd_ >= 0) {
+            ::close(fd_);
+        }
+    }
+
+    UniqueFd(const UniqueFd&) = delete;
+    UniqueFd& operator=(const UniqueFd&) = delete;
+
+    UniqueFd(UniqueFd&& other) noexcept : fd_(other.release()) {}
+
+    UniqueFd& operator=(UniqueFd&& other) noexcept {
+        if(this != &other) {
+            reset(other.release());
+        }
+        return *this;
+    }
+
+    [[nodiscard]] int get() const noexcept {
+        return fd_;
+    }
+
+    [[nodiscard]] int release() noexcept {
+        return std::exchange(fd_, -1);
+    }
+
+    void reset(int fd = -1) noexcept {
+        if(fd_ >= 0) {
+            ::close(fd_);
+        }
+        fd_ = fd;
+    }
+
+private:
+    int fd_;
+};
+
+class TemporaryFile {
+public:
+    TemporaryFile(int directory_fd, std::string&& name) noexcept
+        : directory_fd_(directory_fd), name_(std::move(name)) {}
+
+    ~TemporaryFile() {
+        if(active_) {
+            ::unlinkat(directory_fd_, name_.c_str(), 0);
+        }
+    }
+
+    TemporaryFile(const TemporaryFile&) = delete;
+    TemporaryFile& operator=(const TemporaryFile&) = delete;
+
+    void dismiss() noexcept {
+        active_ = false;
+    }
+
+    [[nodiscard]] const std::string& name() const noexcept {
+        return name_;
+    }
+
+private:
+    int directory_fd_;
+    std::string name_;
+    bool active_ = true;
+};
+
+[[noreturn]] void throw_system_error(int error, std::string operation) {
+    throw std::system_error(
+        error,
+        std::generic_category(),
+        std::move(operation)
+    );
+}
+
+void close_checked(UniqueFd& fd, std::string_view description) {
+    const int raw_fd = fd.release();
+    if(raw_fd < 0) {
+        throw std::logic_error("Attempted to close an invalid file descriptor");
+    }
+
+    if(::close(raw_fd) == -1) {
+        const int error = errno;
+        throw_system_error(error, "close " + std::string(description));
+    }
+}
+
+void fsync_checked(int fd, std::string_view description) {
+    while(::fsync(fd) == -1) {
+        const int error = errno;
+        if(error == EINTR) {
+            continue;
+        }
+        throw_system_error(error, "fsync " + std::string(description));
+    }
+}
+
+void write_all(int fd, std::span<const uint8_t> bytes) {
+    std::size_t offset = 0;
+    while(offset < bytes.size()) {
+        const auto remaining = bytes.size() - offset;
+        const auto chunk_size = std::min(
+            remaining,
+            static_cast<std::size_t>(
+                std::numeric_limits<ssize_t>::max()
+            )
+        );
+
+        const ssize_t written = ::write(
+            fd,
+            bytes.data() + offset,
+            chunk_size
+        );
+        if(written == -1) {
+            const int error = errno;
+            if(error == EINTR) {
+                continue;
+            }
+            throw_system_error(error, "write temporary credential store");
+        }
+        if(written == 0) {
+            throw std::runtime_error(
+                "write temporary credential store made no progress"
+            );
+        }
+        offset += static_cast<std::size_t>(written);
+    }
+}
+
+std::string random_temporary_name() {
+    std::array<uint8_t, 16> random_bytes{};
+    openssl_random_bytes(random_bytes);
+
+    constexpr char hex_digits[] = "0123456789abcdef";
+    std::string name = ".vfido2.tmp.";
+    name.reserve(name.size() + random_bytes.size() * 2);
+    for(const uint8_t byte : random_bytes) {
+        name.push_back(hex_digits[byte >> 4]);
+        name.push_back(hex_digits[byte & 0x0F]);
+    }
+    return name;
+}
+
+std::pair<UniqueFd, std::string> create_temporary_file(int directory_fd) {
+    constexpr int maximum_attempts = 16;
+    for(int attempt = 0; attempt < maximum_attempts; ++attempt) {
+        auto name = random_temporary_name();
+        const int fd = ::openat(
+            directory_fd,
+            name.c_str(),
+            O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
+            S_IRUSR | S_IWUSR
+        );
+        if(fd >= 0) {
+            return {UniqueFd(fd), std::move(name)};
+        }
+
+        const int error = errno;
+        if(error != EEXIST) {
+            throw_system_error(error, "create temporary credential store");
+        }
+    }
+
+    throw std::runtime_error(
+        "Could not create a unique temporary credential store"
+    );
+}
+
+void validate_credential(const StoredCredential& credential) {
+    if(credential.id.size() < 16) {
+        throw std::invalid_argument(
+            "Credential ID must contain at least 16 bytes"
+        );
+    }
+    if(credential.rpId.empty()) {
+        throw std::invalid_argument("Relying Party ID must not be empty");
+    }
+    if(credential.userId.empty() || credential.userId.size() > 64) {
+        throw std::invalid_argument(
+            "User ID must contain between 1 and 64 bytes"
+        );
+    }
+    if(credential.alg != -7) {
+        throw std::invalid_argument("Unsupported credential algorithm");
+    }
+    if(credential.private_blob.empty()) {
+        throw std::invalid_argument("Private credential blob must not be empty");
+    }
+    if(credential.public_blob.empty()) {
+        throw std::invalid_argument("Public credential blob must not be empty");
+    }
+}
+
+std::filesystem::path prepare_store_directory(
+    const std::filesystem::path& store_path
+) {
+    auto directory = store_path.parent_path();
+    if(directory.empty()) {
+        directory = ".";
+    }
+
+    std::error_code error;
+    const bool created = std::filesystem::create_directories(directory, error);
+    if(error) {
+        throw std::filesystem::filesystem_error(
+            "create credential store directory",
+            directory,
+            error
+        );
+    }
+
+    if(created) {
+        std::filesystem::permissions(
+            directory,
+            std::filesystem::perms::owner_all,
+            std::filesystem::perm_options::replace,
+            error
+        );
+        if(error) {
+            throw std::filesystem::filesystem_error(
+                "set credential store directory permissions",
+                directory,
+                error
+            );
+        }
+    }
+
+    return directory;
+}
+
+UniqueFd open_store_directory(const std::filesystem::path& directory) {
+    const int fd = ::open(
+        directory.c_str(),
+        O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW
+    );
+    if(fd == -1) {
+        const int error = errno;
+        throw_system_error(
+            error,
+            "open credential store directory " + directory.string()
+        );
+    }
+
+    struct stat status{};
+    if(::fstat(fd, &status) == -1) {
+        const int error = errno;
+        ::close(fd);
+        throw_system_error(error, "inspect credential store directory");
+    }
+    if(!S_ISDIR(status.st_mode)) {
+        ::close(fd);
+        throw std::runtime_error("Credential store parent is not a directory");
+    }
+    if((status.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+        ::close(fd);
+        throw std::runtime_error(
+            "Credential store directory must not be writable by group or others"
+        );
+    }
+
+    return UniqueFd(fd);
+}
+
+void atomic_write_file(
+    const std::filesystem::path& store_path,
+    std::span<const uint8_t> contents
+) {
+    const auto filename = store_path.filename();
+    if(filename.empty() || filename == "." || filename == "..") {
+        throw std::invalid_argument(
+            "Credential store path must include a valid filename"
+        );
+    }
+
+    const auto directory_path = prepare_store_directory(store_path);
+    auto directory = open_store_directory(directory_path);
+    auto [output, temporary_name] = create_temporary_file(directory.get());
+    TemporaryFile temporary(directory.get(), std::move(temporary_name));
+
+    write_all(output.get(), contents);
+    fsync_checked(output.get(), "temporary credential store");
+    close_checked(output, "temporary credential store");
+
+    int rename_result;
+    do {
+        rename_result = ::renameat(
+            directory.get(),
+            temporary.name().c_str(),
+            directory.get(),
+            filename.c_str()
+        );
+    } while(rename_result == -1 && errno == EINTR);
+
+    if(rename_result == -1) {
+        const int error = errno;
+        throw_system_error(error, "replace credential store");
+    }
+
+    temporary.dismiss();
+    fsync_checked(directory.get(), "credential store directory");
+    close_checked(directory, "credential store directory");
+}
 
 uint8_t decode_hex_digit(char digit) {
     if(digit >= '0' && digit <= '9')
@@ -221,10 +523,11 @@ std::vector<uint8_t> CredentialStore::encrypt(std::vector<uint8_t> &plaintext) {
 }
 
 // Saving credentials to the file
-void CredentialStore::save() {
+void CredentialStore::save_storage(const Storage& storage) {
     using namespace nlohmann;
     json j = json::array();
-    for (const auto &[hexId, cred] : stored_) {
+    for(const auto& item : storage) {
+        const auto& cred = item.second;
         j.push_back({
             {"id", toHex(cred.id)},
             {"rpId", cred.rpId},
@@ -240,34 +543,11 @@ void CredentialStore::save() {
     std::string plaintext = j.dump();
     std::vector<uint8_t> plain(plaintext.begin(), plaintext.end());
     auto encrypted = encrypt(plain);
-    if(!std::filesystem::create_directories(storePath_.parent_path()))
-        throw std::runtime_error("Error creating directory: " + storePath_.parent_path().string());
+    atomic_write_file(storePath_, encrypted);
+}
 
-    auto temp_path = storePath_.string() + ".tmp";
-    int fd = ::open(
-        temp_path.c_str(),
-        O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
-        0600
-    );
-    if(fd == -1) throw std::runtime_error("Cannot open file for writing: " + std::string(::strerror(errno)));
-
-    __gnu_cxx::stdio_filebuf<char> filebuf(fd, std::ios_base::out);
-    std::ostream f_temp(&filebuf);
-    f_temp.exceptions(std::ios::failbit | std::ios::badbit);
-    if(!f_temp) throw std::runtime_error("Cannot create stream on a file descriptor: " + std::to_string(fd));
-
-    f_temp.write((char*)encrypted.data(), encrypted.size());
-    f_temp.flush();
-
-    if(::fsync(fd) == -1)
-        throw std::system_error(errno, std::generic_category(), "fsync");
-
-    if(filebuf.close() == nullptr)
-        throw std::runtime_error("Faled to close temporary database");
-
-    if(::rename(temp_path.c_str(), storePath_.c_str()) == -1)
-        throw std::system_error(errno, std::generic_category(), "rename");
-
+void CredentialStore::save() {
+    save_storage(stored_);
 }
 
 CredentialStore::Storage CredentialStore::parse_storage(const nlohmann::json &json) {
@@ -300,9 +580,8 @@ CredentialStore::Storage CredentialStore::parse_storage(const nlohmann::json &js
         cred.signCount = static_cast<uint32_t>(count);
 
         cred.public_blob = read_byte_array(entry, "public_blob");
-        if(cred.public_blob.empty()) throw std::runtime_error("Empty Public Blob");
         cred.private_blob = read_byte_array(entry, "private_blob");
-        if(cred.private_blob.empty()) throw std::runtime_error("Empty Private Blob");
+        validate_credential(cred);
 
         const auto credential_id = toHex(cred.id);
         if(!loaded.emplace(credential_id, std::move(cred)).second)
@@ -334,8 +613,16 @@ bool CredentialStore::has(const std::vector<uint8_t> &credId) const {
 }
 
 void CredentialStore::put(const StoredCredential &cred) {
-    stored_[toHex(cred.id)] = cred;
-    save();
+    validate_credential(cred);
+    const auto credential_id = toHex(cred.id);
+    if(stored_.contains(credential_id)) {
+        throw std::invalid_argument("Credential ID already exists");
+    }
+
+    auto updated = stored_;
+    updated.emplace(credential_id, cred);
+    save_storage(updated);
+    stored_.swap(updated);
 }
 
 
@@ -349,6 +636,17 @@ const CredentialStore::Storage CredentialStore::get_all_creds() const
 }
 
 void CredentialStore::incrementSigCount(const std::vector<uint8_t> &credId) {
-    stored_.at(toHex(credId)).signCount++;
-    save();
+    const auto credential_id = toHex(credId);
+    const auto current = stored_.find(credential_id);
+    if(current == stored_.end()) {
+        throw std::out_of_range("Credential ID was not found");
+    }
+    if(current->second.signCount == std::numeric_limits<uint32_t>::max()) {
+        throw std::overflow_error("Signature counter cannot be incremented");
+    }
+
+    auto updated = stored_;
+    ++updated.at(credential_id).signCount;
+    save_storage(updated);
+    stored_.swap(updated);
 }

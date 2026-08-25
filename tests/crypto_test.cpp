@@ -1,16 +1,21 @@
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
+#include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 #include <nlohmann/json.hpp>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include "credentials/credential.hpp"
@@ -31,27 +36,58 @@ void check(bool condition, const char* expression, int line) {
 
 class TemporaryStore {
 public:
-    TemporaryStore()
-        : path_(
-              std::filesystem::temp_directory_path() /
-              ("vfido2-crypto-test-" + std::to_string(getpid()) + ".bin")
-          ) {
-        std::error_code error;
-        std::filesystem::remove(path_, error);
+    TemporaryStore() {
+        auto name_template = (
+            std::filesystem::temp_directory_path() /
+            "vfido2-crypto-test-XXXXXX"
+        ).string();
+        std::vector<char> writable_name(
+            name_template.begin(), name_template.end()
+        );
+        writable_name.push_back('\0');
+
+        const char* created = ::mkdtemp(writable_name.data());
+        if(created == nullptr) {
+            throw std::system_error(
+                errno,
+                std::generic_category(),
+                "mkdtemp"
+            );
+        }
+
+        directory_ = created;
+        path_ = directory_ / "credentials.bin";
     }
 
     ~TemporaryStore() {
         std::error_code error;
-        std::filesystem::remove(path_, error);
+        std::filesystem::remove_all(directory_, error);
     }
 
     const std::filesystem::path& path() const {
         return path_;
     }
 
+    const std::filesystem::path& directory() const {
+        return directory_;
+    }
+
 private:
+    std::filesystem::path directory_;
     std::filesystem::path path_;
 };
+
+bool contains_generated_temporary_file(
+    const std::filesystem::path& directory
+) {
+    for(const auto& entry : std::filesystem::directory_iterator(directory)) {
+        if(entry.path().filename().string().starts_with(".vfido2.tmp.") &&
+           entry.path().filename() != ".vfido2.tmp.stale") {
+            return true;
+        }
+    }
+    return false;
+}
 
 void test_sha256() {
     const std::string input = "abc";
@@ -198,7 +234,7 @@ void test_invalid_blob_values_are_rejected() {
     TemporaryStore temporary;
     const std::vector<uint8_t> key(32, 0x44);
 
-    for(const nlohmann::json invalid_value : {
+    for(const nlohmann::json& invalid_value : {
         nlohmann::json(-1),
         nlohmann::json(256),
         nlohmann::json(1.5)
@@ -241,6 +277,94 @@ void test_credential_store_round_trip() {
     CHECK(loaded.signCount == credential.signCount);
     CHECK(loaded.private_blob == credential.private_blob);
     CHECK(loaded.public_blob == credential.public_blob);
+}
+
+void test_repeated_save_replaces_database_durably() {
+    TemporaryStore temporary;
+    const std::vector<uint8_t> key(32, 0xA6);
+    const auto credential = make_credential();
+
+    std::ofstream stale(temporary.directory() / ".vfido2.tmp.stale");
+    CHECK(static_cast<bool>(stale));
+    stale << "stale";
+    stale.close();
+
+    CredentialStore writer(temporary.path(), key);
+    writer.put(credential);
+    writer.incrementSigCount(credential.id);
+
+    CredentialStore reader(temporary.path(), key);
+    reader.load();
+    CHECK(reader.get_by_credId(credential.id).signCount == 5);
+    CHECK(!contains_generated_temporary_file(temporary.directory()));
+
+    struct stat status{};
+    CHECK(::stat(temporary.path().c_str(), &status) == 0);
+    CHECK((status.st_mode & 0777) == 0600);
+}
+
+void test_failed_replacement_rolls_back_and_removes_temporary_file() {
+    TemporaryStore temporary;
+    const std::vector<uint8_t> key(32, 0xA7);
+    CHECK(std::filesystem::create_directory(temporary.path()));
+
+    CredentialStore writer(temporary.path(), key);
+    bool rejected = false;
+    try {
+        writer.put(make_credential());
+    } catch(const std::exception&) {
+        rejected = true;
+    }
+
+    CHECK(rejected);
+    CHECK(!writer.has(make_credential().id));
+    CHECK(!contains_generated_temporary_file(temporary.directory()));
+}
+
+void test_signature_counter_overflow_is_rejected() {
+    TemporaryStore temporary;
+    const std::vector<uint8_t> key(32, 0xA8);
+    auto credential = make_credential();
+    credential.signCount = std::numeric_limits<uint32_t>::max();
+
+    CredentialStore writer(temporary.path(), key);
+    writer.put(credential);
+
+    bool rejected = false;
+    try {
+        writer.incrementSigCount(credential.id);
+    } catch(const std::overflow_error&) {
+        rejected = true;
+    }
+    CHECK(rejected);
+    CHECK(
+        writer.get_by_credId(credential.id).signCount ==
+        std::numeric_limits<uint32_t>::max()
+    );
+
+    CredentialStore reader(temporary.path(), key);
+    reader.load();
+    CHECK(
+        reader.get_by_credId(credential.id).signCount ==
+        std::numeric_limits<uint32_t>::max()
+    );
+}
+
+void test_duplicate_credential_id_is_rejected() {
+    TemporaryStore temporary;
+    const std::vector<uint8_t> key(32, 0xA9);
+    const auto credential = make_credential();
+
+    CredentialStore writer(temporary.path(), key);
+    writer.put(credential);
+
+    bool rejected = false;
+    try {
+        writer.put(credential);
+    } catch(const std::invalid_argument&) {
+        rejected = true;
+    }
+    CHECK(rejected);
 }
 
 void test_modified_ciphertext_is_rejected() {
@@ -294,6 +418,10 @@ int main() {
         test_sha256();
         test_hex_decoder_rejects_malformed_input();
         test_credential_store_round_trip();
+        test_repeated_save_replaces_database_durably();
+        test_failed_replacement_rolls_back_and_removes_temporary_file();
+        test_signature_counter_overflow_is_rejected();
+        test_duplicate_credential_id_is_rejected();
         test_invalid_blob_values_are_rejected();
         test_modified_ciphertext_is_rejected();
         test_wrong_key_size_is_rejected();

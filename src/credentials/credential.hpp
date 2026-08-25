@@ -34,7 +34,6 @@ class CredentialStore {
         using Storage = std::unordered_map<std::string, StoredCredential>;
         CredentialStore(std::filesystem::path path, Key key);
         void load();
-        void save();
 
         bool has(const std::vector<uint8_t> &credId) const;
         void put(const StoredCredential &cred);
@@ -48,6 +47,8 @@ class CredentialStore {
         Storage stored_;
         std::vector<uint8_t> decrypt(std::vector<uint8_t> &ciphertext);
         std::vector<uint8_t> encrypt(std::vector<uint8_t> &plaintext);
+        void save();
+        void save_storage(const Storage& storage);
 
         Storage parse_storage(const nlohmann::json &json);
 
