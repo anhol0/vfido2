@@ -7,6 +7,7 @@
 #include <vector>
 #include <cstdint>
 #include <vector>
+#include <nlohmann/json.hpp>
 
 typedef struct PublicKeyCredentialDescriptor {
     std::string type;
@@ -30,6 +31,7 @@ typedef struct StoredCredential {
 class CredentialStore {
     public:
         using Key = const std::vector<uint8_t>;
+        using Storage = std::unordered_map<std::string, StoredCredential>;
         CredentialStore(std::filesystem::path path, Key key);
         void load();
         void save();
@@ -37,15 +39,18 @@ class CredentialStore {
         bool has(const std::vector<uint8_t> &credId) const;
         void put(const StoredCredential &cred);
         const StoredCredential& get_by_credId(const std::vector<uint8_t> &credId) const;
-        const std::unordered_map<std::string, StoredCredential> get_all_creds() const;
+        const Storage get_all_creds() const;
         void incrementSigCount(const std::vector<uint8_t> &credId);
         std::string toHex(const std::vector<uint8_t> &v) const;
         std::vector<uint8_t> fromHex(const std::string &s);
 
         private:
-        std::unordered_map<std::string, StoredCredential> stored_;
+        Storage stored_;
         std::vector<uint8_t> decrypt(std::vector<uint8_t> &ciphertext);
         std::vector<uint8_t> encrypt(std::vector<uint8_t> &plaintext);
+
+        Storage parse_storage(const nlohmann::json &json);
+
         std::filesystem::path storePath_;
         Key storeKey_;
         int signCounter = 0;

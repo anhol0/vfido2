@@ -8,13 +8,65 @@
 #include <ios>
 #include <iterator>
 #include <iostream>
-// #include <format>
+#include <limits>
+#include <nlohmann/detail/exceptions.hpp>
 #include <nlohmann/detail/value_t.hpp>
+#include <nlohmann/json_fwd.hpp>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <sys/types.h>
 #include <nlohmann/json.hpp>
+#include <unordered_map>
+#include <utility>
 #include <vector>
+
+namespace {
+
+uint8_t decode_hex_digit(char digit) {
+    if(digit >= '0' && digit <= '9')
+        return static_cast<uint8_t>(digit - '0');
+    if(digit >= 'a' && digit <= 'f')
+        return static_cast<uint8_t>(digit - 'a' + 10);
+    if(digit >= 'A' && digit <= 'F')
+        return static_cast<uint8_t>(digit - 'A' + 10);
+
+    throw std::invalid_argument("Invalid hexadecimal character");
+}
+
+std::vector<uint8_t> read_byte_array(
+    const nlohmann::json& entry,
+    std::string_view field_name
+) {
+    const auto& value = entry.at(field_name);
+    if(!value.is_array()) {
+        throw std::runtime_error(
+            std::string(field_name) + " is not a byte array"
+        );
+    }
+
+    std::vector<uint8_t> bytes;
+    bytes.reserve(value.size());
+    for(const auto& element : value) {
+        if(!element.is_number_unsigned()) {
+            throw std::runtime_error(
+                std::string(field_name) +
+                " contains a value that is not an unsigned integer"
+            );
+        }
+
+        const auto number = element.get<uint64_t>();
+        if(number > std::numeric_limits<uint8_t>::max()) {
+            throw std::runtime_error(
+                std::string(field_name) + " contains a value above 255"
+            );
+        }
+        bytes.push_back(static_cast<uint8_t>(number));
+    }
+    return bytes;
+}
+
+} // namespace
 
 CredentialStore::CredentialStore(std::filesystem::path path, Key key) : storePath_(path), storeKey_(key) {
     if(storeKey_.size() != 32) {
@@ -37,9 +89,11 @@ std::string CredentialStore::toHex(const std::vector<uint8_t> &v) const {
 std::vector<uint8_t> CredentialStore::fromHex(const std::string &s) {
     std::vector<uint8_t> v;
     v.reserve(s.size() / 2);
-    for(size_t i = 0; i + 1< s.size(); i += 2) {
-        uint8_t b = std::stoul(s.substr(i, 2), nullptr, 16);
-        v.push_back(b);
+    if(s.size() % 2) throw std::invalid_argument("Odd size string is given");
+    for(std::size_t i = 0; i < s.size(); i += 2) {
+        const uint8_t high = decode_hex_digit(s[i]);
+        const uint8_t low = decode_hex_digit(s[i + 1]);
+        v.push_back(static_cast<uint8_t>((high << 4) | low));
     }
     return v;
 }
@@ -188,9 +242,49 @@ void CredentialStore::save() {
     f.write((char*)encrypted.data(), encrypted.size());
 }
 
+CredentialStore::Storage CredentialStore::parse_storage(const nlohmann::json &json) {
+    if(!json.is_array()) throw std::runtime_error("Storage is not an array");
+    Storage loaded;
+
+    for(const auto &entry : json) {
+        if (!entry.is_object()) throw std::runtime_error("Storage entry is not an object");
+        StoredCredential cred;
+        cred.id = fromHex(entry.at("id").get<std::string>());
+        if(cred.id.size() < 16) throw std::runtime_error("Invalid Credential ID");
+
+        cred.rpId = entry.at("rpId").get<std::string>();
+        if(cred.rpId.empty()) throw std::runtime_error("Empty Relying Party ID");
+
+        cred.userId = fromHex(entry.at("userId").get<std::string>());
+        if(cred.userId.empty() || cred.userId.size() > 64) throw std::runtime_error("Invalid User ID");
+
+        cred.userName = entry.at("userName").get<std::string>();
+        cred.userDisplayName = entry.at("userDisplayName").get<std::string>();
+
+        cred.alg = entry.at("alg").get<int>();
+        if(cred.alg != -7) throw std::runtime_error("Invalid encryption alrogithm");
+
+        const auto &signCountValue = entry.at("signCount");
+        if(!signCountValue.is_number_unsigned()) throw std::runtime_error("Invalid Sign Count type");
+
+        const auto count = signCountValue.get<uint64_t>();
+        if(count > std::numeric_limits<uint32_t>::max()) throw std::runtime_error("Sign Count out of range");
+        cred.signCount = static_cast<uint32_t>(count);
+
+        cred.public_blob = read_byte_array(entry, "public_blob");
+        if(cred.public_blob.empty()) throw std::runtime_error("Empty Public Blob");
+        cred.private_blob = read_byte_array(entry, "private_blob");
+        if(cred.private_blob.empty()) throw std::runtime_error("Empty Private Blob");
+
+        const auto credential_id = toHex(cred.id);
+        if(!loaded.emplace(credential_id, std::move(cred)).second)
+            throw std::runtime_error("Duplicate Credential ID");
+    }
+    return loaded;
+}
+
 void CredentialStore::load() {
     using namespace nlohmann;
-    stored_.clear();
     if(!std::filesystem::exists(storePath_)) return;
 
     std::ifstream f(storePath_, std::ios::binary);
@@ -201,19 +295,8 @@ void CredentialStore::load() {
     auto plain = decrypt(enc_blob);
     json j = json::parse(plain.begin(), plain.end());
 
-    for(const auto &entry : j) {
-        StoredCredential cred;
-        cred.id = fromHex(entry["id"].get<std::string>());
-        cred.rpId = entry["rpId"].get<std::string>();
-        cred.userId = fromHex(entry["userId"].get<std::string>());
-        cred.userName = entry["userName"].get<std::string>();
-        cred.userDisplayName = entry["userDisplayName"].get<std::string>();
-        cred.alg = entry["alg"].get<int>();
-        cred.signCount = entry["signCount"].get<uint32_t>();
-        cred.public_blob = entry["public_blob"].get<std::vector<uint8_t>>();
-        cred.private_blob = entry["private_blob"].get<std::vector<uint8_t>>();
-        stored_[toHex(cred.id)] = cred;
-    }
+    auto loaded = parse_storage(j);
+    stored_.swap(loaded);
 }
 
 // Public API
@@ -232,7 +315,7 @@ const StoredCredential& CredentialStore::get_by_credId(const std::vector<uint8_t
     return stored_.at(toHex(credId));
 }
 
-const std::unordered_map<std::string, StoredCredential> CredentialStore::get_all_creds() const
+const CredentialStore::Storage CredentialStore::get_all_creds() const
 {
     return stored_;
 }
