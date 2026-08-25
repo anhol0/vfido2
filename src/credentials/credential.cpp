@@ -1,8 +1,11 @@
 #include "credential.hpp"
 #include "cryptography/crypto.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
+#include <fcntl.h>
 #include <filesystem>
 #include <fstream>
 #include <ios>
@@ -12,14 +15,17 @@
 #include <nlohmann/detail/exceptions.hpp>
 #include <nlohmann/detail/value_t.hpp>
 #include <nlohmann/json_fwd.hpp>
+#include <ostream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <sys/types.h>
 #include <nlohmann/json.hpp>
+#include <unistd.h>
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include <ext/stdio_filebuf.h>
 
 namespace {
 
@@ -234,12 +240,34 @@ void CredentialStore::save() {
     std::string plaintext = j.dump();
     std::vector<uint8_t> plain(plaintext.begin(), plaintext.end());
     auto encrypted = encrypt(plain);
-    std::filesystem::create_directories(
-            std::filesystem::path(storePath_).parent_path()
+    if(!std::filesystem::create_directories(storePath_.parent_path()))
+        throw std::runtime_error("Error creating directory: " + storePath_.parent_path().string());
+
+    auto temp_path = storePath_.string() + ".tmp";
+    int fd = ::open(
+        temp_path.c_str(),
+        O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
+        0600
     );
-    std::ofstream f(storePath_, std::ios::binary);
-    if(!f) throw std::runtime_error("Cannot open file for writing");
-    f.write((char*)encrypted.data(), encrypted.size());
+    if(fd == -1) throw std::runtime_error("Cannot open file for writing: " + std::string(::strerror(errno)));
+
+    __gnu_cxx::stdio_filebuf<char> filebuf(fd, std::ios_base::out);
+    std::ostream f_temp(&filebuf);
+    f_temp.exceptions(std::ios::failbit | std::ios::badbit);
+    if(!f_temp) throw std::runtime_error("Cannot create stream on a file descriptor: " + std::to_string(fd));
+
+    f_temp.write((char*)encrypted.data(), encrypted.size());
+    f_temp.flush();
+
+    if(::fsync(fd) == -1)
+        throw std::system_error(errno, std::generic_category(), "fsync");
+
+    if(filebuf.close() == nullptr)
+        throw std::runtime_error("Faled to close temporary database");
+
+    if(::rename(temp_path.c_str(), storePath_.c_str()) == -1)
+        throw std::system_error(errno, std::generic_category(), "rename");
+
 }
 
 CredentialStore::Storage CredentialStore::parse_storage(const nlohmann::json &json) {
