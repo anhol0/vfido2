@@ -14,9 +14,11 @@
 #include "cryptography/crypto.hpp"
 #include "uv/src/auth.hpp"
 
-extern CredentialStore store;
-
-std::vector<uint8_t> CTAPGetAssertionRequest::build_response(UHIDReport &r, std::stop_token stop)
+std::vector<uint8_t> CTAPGetAssertionRequest::build_response(
+    UHIDReport& r,
+    std::stop_token stop,
+    CredentialStore& store
+)
 {
     cancellation_point(stop);
     // Getting number of credentials
@@ -30,7 +32,7 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(UHIDReport &r, std:
             }
         }
     } else {
-        auto &all = store.get_all_creds();
+        const auto all = store.get_all_creds();
         for(auto& [id, cred] : all) {
             if(cred.rpId == rpId) {
                 number_of_credentials++;
@@ -89,7 +91,12 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(UHIDReport &r, std:
             std::cout << "Credential found!\n";
             // Generating payload for specific credential
             cancellation_point(stop);
-            return generate_single_credential_payload(credential_for_authentication.value(), number_of_credentials, stop);
+            return generate_single_credential_payload(
+                credential_for_authentication.value(),
+                number_of_credentials,
+                stop,
+                store
+            );
         } else {
             return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_INVALID_CREDENTIAL)};
         }
@@ -100,18 +107,27 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(UHIDReport &r, std:
     return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_NO_CREDENTIALS)};
 }
 
-std::vector<uint8_t> CTAPGetAssertionRequest::build_response_next(std::stop_token stop) {
+std::vector<uint8_t> CTAPGetAssertionRequest::build_response_next(
+    std::stop_token stop,
+    CredentialStore& store
+) {
     auto cred_maybe = cache.get_next();
     if(!cred_maybe.has_value()) { return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_NOT_ALLOWED)}; }
     auto cred = cred_maybe.value();
     cancellation_point(stop);
-    return generate_single_credential_payload(cred, std::nullopt, stop);
+    return generate_single_credential_payload(
+        cred,
+        std::nullopt,
+        stop,
+        store
+    );
 }
 
 std::vector<uint8_t> CTAPGetAssertionRequest::generate_single_credential_payload(
     StoredCredential &credential,
     std::optional<uint32_t> number_of_credentials,
-    std::stop_token stop
+    std::stop_token stop,
+    CredentialStore& store
 ) {
     // incrementing signCont for selected credential
     credential.signCount++;

@@ -105,7 +105,7 @@ namespace {
 
 }
 
-void run(FIDODevice &device) {
+void run(FIDODevice& device, CredentialStore& store) {
 #ifdef DEBUG
     // Showing
     #pragma clang diagnostic push
@@ -300,7 +300,8 @@ void run(FIDODevice &device) {
                                 request = std::move(request),
                                 generation,
                                 &completion_mutex,
-                                &completion
+                                &completion,
+                                &store
                             ]
                             (std::stop_token stop) mutable
                         {
@@ -309,7 +310,11 @@ void run(FIDODevice &device) {
                                 .cid = request.cid
                             };
                             try {
-                                result.packet = execute_ctap_request(std::move(request), stop);
+                                result.packet = execute_ctap_request(
+                                    std::move(request),
+                                    stop,
+                                    store
+                                );
                             } catch (const OperationCancelled &e) {
                                 std::cout << "Exception: " <<  e.what() << std::endl;
                                 result.packet = make_cbor_error(

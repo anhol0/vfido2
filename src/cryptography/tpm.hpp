@@ -144,10 +144,9 @@ typedef struct CredentialKey {
 // Getting the persistent handle from the TPM SRK
 TpmLocalHandle get_primary(ESYS_CONTEXT *ctx);
 
-// Getting or creating 32 bit encryption key
-// Creates the key on the first run and seals it in the TPM NVRAM
-// For subsequent runs, it gets it from NVRAM
-std::vector<uint8_t> get_or_create_store_key();
+// One-time migration access to the legacy raw NV-stored database key.
+std::vector<uint8_t> read_legacy_store_key();
+void delete_legacy_store_key();
 
 // Creating ECC P256 keypair for selected credential
 CredentialKey create_credential_key(ESYS_CONTEXT *ctx, ESYS_TR primaryHandle);

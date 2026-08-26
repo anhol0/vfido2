@@ -53,3 +53,47 @@ add_test(
     NAME crypto
     COMMAND crypto_tests
 )
+
+add_executable(store_security_integration_tests
+    store_security_integration_test.cpp
+    ${PROJECT_SOURCE_DIR}/src/cryptography/crypto.cpp
+    ${PROJECT_SOURCE_DIR}/src/cryptography/store_security.cpp
+    ${PROJECT_SOURCE_DIR}/src/credentials/credential.cpp
+)
+
+target_include_directories(store_security_integration_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/src
+    ${OPENSSL_INCLUDE_DIRS}
+    ${TSS2_FAPI_INCLUDE_DIRS}
+    ${TSS2_RC_INCLUDE_DIRS}
+)
+
+target_link_libraries(store_security_integration_tests PRIVATE
+    ${OPENSSL_LIBRARIES}
+    ${TSS2_FAPI_LIBRARIES}
+    ${TSS2_RC_LIBRARIES}
+)
+
+find_program(SWTPM_EXECUTABLE swtpm)
+find_program(SWTPM_IOCTL_EXECUTABLE swtpm_ioctl)
+find_program(TPM2_STARTUP_EXECUTABLE tpm2_startup)
+find_program(TPM2_CLEAR_EXECUTABLE tpm2_clear)
+find_program(TPM2_FLUSHCONTEXT_EXECUTABLE tpm2_flushcontext)
+find_program(TSS2_PROVISION_EXECUTABLE tss2_provision)
+
+if(
+    SWTPM_EXECUTABLE AND
+    SWTPM_IOCTL_EXECUTABLE AND
+    TPM2_STARTUP_EXECUTABLE AND
+    TPM2_CLEAR_EXECUTABLE AND
+    TPM2_FLUSHCONTEXT_EXECUTABLE AND
+    TSS2_PROVISION_EXECUTABLE
+)
+    add_test(
+        NAME store_security_swtpm
+        COMMAND bash
+            ${CMAKE_CURRENT_SOURCE_DIR}/swtpm_integration_test.sh
+            $<TARGET_FILE:store_security_integration_tests>
+            /etc/tpm2-tss/fapi-profiles/
+    )
+endif()

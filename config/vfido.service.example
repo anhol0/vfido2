@@ -1,0 +1,24 @@
+[Unit]
+Description=vFIDO2 virtual authenticator
+After=systemd-udevd.service
+
+[Service]
+Type=simple
+User=vfido
+Group=vfido
+ExecStart=/usr/local/bin/vfido run
+StateDirectory=vfido
+StateDirectoryMode=0700
+LoadCredentialEncrypted=vfido-db-auth:/etc/credstore.encrypted/vfido-db-auth
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+DevicePolicy=closed
+DeviceAllow=/dev/uhid rw
+DeviceAllow=/dev/tpmrm0 rw
+DeviceAllow=/dev/tpm0 rw
+
+[Install]
+WantedBy=multi-user.target

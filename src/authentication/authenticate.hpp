@@ -51,8 +51,15 @@ public:
         origin_cid = cid;
     }
     bool parseRequest(std::vector<uint8_t> &payload);
-    std::vector<uint8_t> build_response(UHIDReport &r, std::stop_token stop);
-    std::vector<uint8_t> build_response_next(std::stop_token stop);
+    std::vector<uint8_t> build_response(
+        UHIDReport& r,
+        std::stop_token stop,
+        CredentialStore& store
+    );
+    std::vector<uint8_t> build_response_next(
+        std::stop_token stop,
+        CredentialStore& store
+    );
     void clear() {
         rpId.clear();
         clientDataHash.resize(0);
@@ -93,7 +100,8 @@ private:
     std::vector<uint8_t> generate_single_credential_payload (
         StoredCredential &credential,
         std::optional<uint32_t> number_of_credentials,
-        std::stop_token stop
+        std::stop_token stop,
+        CredentialStore& store
     );
     std::array<ParseFn, 8> dispatch_table = {
         nullptr,

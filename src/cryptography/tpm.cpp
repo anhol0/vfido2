@@ -18,99 +18,19 @@
 #include <vector>
 
 namespace {
-    bool nv_index_exists(ESYS_CONTEXT *ctx) {
-        TpmLocalHandle nvHandle(ctx);
-        TSS2_RC rc = Esys_TR_FromTPMPublic(
-                ctx,
-                STORE_KEY_NV_INDEX,
-                ESYS_TR_NONE, ESYS_TR_NONE, ESYS_TR_NONE,
-                nvHandle.ptr()
-        );
-        if(rc != TSS2_RC_SUCCESS)
-            return false;
-
-        //Checking if index has actually been written
-
-        TPM2B_NV_PUBLIC *nvPublicRaw = nullptr;
-        TPM2B_NAME *nvNameRaw = nullptr;
-        rc = Esys_NV_ReadPublic(ctx, nvHandle, ESYS_TR_NONE, ESYS_TR_NONE, ESYS_TR_NONE, &nvPublicRaw, &nvNameRaw);
-        if(rc != TSS2_RC_SUCCESS) {
-            return false;
-        }
-        EsysUniquePtr<TPM2B_NV_PUBLIC> nvPublic(nvPublicRaw);
-        EsysUniquePtr<TPM2B_NAME> nvName(nvNameRaw);
-        bool written = (nvPublic->nvPublic.attributes & TPMA_NV_WRITTEN) != 0;
-        return written;
-    }
-
-    void nv_index_undefine(ESYS_CONTEXT *ctx) {
-        ESYS_TR nvHandle = ESYS_TR_NONE;
-        TSS2_RC rc = Esys_TR_FromTPMPublic(ctx, STORE_KEY_NV_INDEX, ESYS_TR_NONE, ESYS_TR_NONE, ESYS_TR_NONE, &nvHandle);
-        if(rc != TSS2_RC_SUCCESS) {
-            return;
-        }
-        TpmLocalHandle nvGuard(ctx, nvHandle);
-        Esys_NV_UndefineSpace(ctx, ESYS_TR_RH_OWNER, nvHandle, ESYS_TR_PASSWORD, ESYS_TR_NONE, ESYS_TR_NONE);
-        // nvGuard will take care about freeing memory allocated for the handle
-    }
-
-    void nv_create_and_write_key(ESYS_CONTEXT *ctx, std::vector<uint8_t> &key) {
-        // Definition of NV index
-        TPM2B_NV_PUBLIC nvPublic = {};
-        // nvPublic.size = sizeof(TPMS_NV_PUBLIC);
-        nvPublic.nvPublic.nvIndex = STORE_KEY_NV_INDEX;
-        nvPublic.nvPublic.nameAlg = TPM2_ALG_SHA256;
-        nvPublic.nvPublic.dataSize = STORE_KEY_SIZE;
-
-        //
-        nvPublic.nvPublic.attributes = TPMA_NV_OWNERWRITE |
-                                       TPMA_NV_OWNERREAD  |
-                                       TPMA_NV_NO_DA      |
-                                       TPMA_NV_AUTHWRITE  |
-                                       TPMA_NV_AUTHREAD;
-        TPM2B_AUTH auth = {};
-        ESYS_TR nvHandle = ESYS_TR_NONE;
-        TSS2_RC rc = Esys_NV_DefineSpace(
-                ctx,
-                ESYS_TR_RH_OWNER,
-                ESYS_TR_PASSWORD, ESYS_TR_NONE, ESYS_TR_NONE,
-                &auth,
-                &nvPublic,
-                &nvHandle
-        );
-        if(rc != TSS2_RC_SUCCESS) {
-            throw std::runtime_error("NV_DefineSpace failed: " + std::string(Tss2_RC_Decode(rc)));
-        }
-
-        TpmLocalHandle nvHandleGuard(ctx, nvHandle);
-
-        // Writing key bytes
-        TPM2B_MAX_NV_BUFFER nvData = {};
-        nvData.size = STORE_KEY_SIZE;
-        memcpy(nvData.buffer, key.data(), STORE_KEY_SIZE);
-        rc = Esys_NV_Write(
-                ctx,
-                ESYS_TR_RH_OWNER,
-                nvHandleGuard,
-                ESYS_TR_PASSWORD, ESYS_TR_NONE, ESYS_TR_NONE,
-                &nvData,
-                0
-        );
-        if(rc != TSS2_RC_SUCCESS) {
-            throw std::runtime_error("NV_Write failed: " + std::string(Tss2_RC_Decode(rc)));
-        }
-        // Deallocation of nvHandle will be taken care of by nvHandleGuard
-    }
-
-    // Read existing NV index
-    static std::vector<uint8_t> nv_read_key(ESYS_CONTEXT *ctx) {
+    std::vector<uint8_t> nv_read_key(ESYS_CONTEXT *ctx) {
         ESYS_TR nvHandle = {};
         TSS2_RC rc = Esys_TR_FromTPMPublic(
                 ctx, STORE_KEY_NV_INDEX,
                 ESYS_TR_NONE, ESYS_TR_NONE, ESYS_TR_NONE,
                 &nvHandle
         );
-        if(rc != TSS2_RC_SUCCESS) throw std::runtime_error("TR_FromTPMPublic failed on read");
+        if(rc != TSS2_RC_SUCCESS) {
+            throw std::runtime_error(
+                "Legacy database key NV index is unavailable: " +
+                std::string(Tss2_RC_Decode(rc))
+            );
+        }
         TpmLocalHandle nvHandleGuard(ctx, nvHandle);
 
         TPM2B_MAX_NV_BUFFER *nvDataRaw = nullptr;
@@ -127,6 +47,9 @@ namespace {
             throw std::runtime_error("NV_Read failed: " + std::string(Tss2_RC_Decode(rc)));
         }
         EsysUniquePtr<TPM2B_MAX_NV_BUFFER> nvData(nvDataRaw);
+        if(nvData->size != STORE_KEY_SIZE) {
+            throw std::runtime_error("Legacy database key has an invalid size");
+        }
         std::vector<uint8_t> key(nvData->buffer, nvData->buffer + nvData->size);
         return key;
     }
@@ -146,23 +69,44 @@ TpmLocalHandle get_primary(ESYS_CONTEXT *ctx) {
     return TpmLocalHandle(ctx, primaryHandle);
 }
 
-std::vector<uint8_t> get_or_create_store_key() {
+std::vector<uint8_t> read_legacy_store_key() {
     TpmCtx tpm;
-
-    if(!nv_index_exists(tpm.ctx)) {
-        nv_index_undefine(tpm.ctx);
-        TPM2B_DIGEST *randBytesRaw = nullptr;
-        TSS2_RC rc = Esys_GetRandom(tpm.ctx, ESYS_TR_NONE, ESYS_TR_NONE, ESYS_TR_NONE, STORE_KEY_SIZE, &randBytesRaw);
-        if(rc != TSS2_RC_SUCCESS) {
-            throw std::runtime_error("Esys_GetRandom failed!");
-        }
-        EsysUniquePtr<TPM2B_DIGEST> randBytes(randBytesRaw);
-        std::vector<uint8_t> key(randBytes->buffer, randBytes->buffer + randBytes->size);
-        nv_create_and_write_key(tpm.ctx, key);
-        return key;
-    }
-
     return nv_read_key(tpm.ctx);
+}
+
+void delete_legacy_store_key() {
+    TpmCtx tpm;
+    ESYS_TR nv_handle = ESYS_TR_NONE;
+    TSS2_RC result = Esys_TR_FromTPMPublic(
+        tpm.ctx,
+        STORE_KEY_NV_INDEX,
+        ESYS_TR_NONE,
+        ESYS_TR_NONE,
+        ESYS_TR_NONE,
+        &nv_handle
+    );
+    if(result != TSS2_RC_SUCCESS) {
+        throw std::runtime_error(
+            "Could not locate legacy database key for deletion: " +
+            std::string(Tss2_RC_Decode(result))
+        );
+    }
+    TpmLocalHandle handle(tpm.ctx, nv_handle);
+
+    result = Esys_NV_UndefineSpace(
+        tpm.ctx,
+        ESYS_TR_RH_OWNER,
+        handle,
+        ESYS_TR_PASSWORD,
+        ESYS_TR_NONE,
+        ESYS_TR_NONE
+    );
+    if(result != TSS2_RC_SUCCESS) {
+        throw std::runtime_error(
+            "Could not delete legacy database key: " +
+            std::string(Tss2_RC_Decode(result))
+        );
+    }
 }
 
 CredentialKey create_credential_key(ESYS_CONTEXT *ctx, ESYS_TR primaryHandle) {

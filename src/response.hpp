@@ -8,6 +8,7 @@
 #include <vector>
 #include <optional>
 
+#include "credentials/credential.hpp"
 #include "uhid_report.hpp"
 
 constexpr uint8_t MASK = 0x80;
@@ -37,4 +38,8 @@ public:
 CTAPPacket handle_init(UHIDReport &request, uint32_t assigned_cid);
 CTAPPacket handle_ping(UHIDReport &request);
 void start_worker(UHIDReport &request);
-CTAPPacket handle_cbor(UHIDReport &request, std::stop_token stop);
+CTAPPacket handle_cbor(
+    UHIDReport& request,
+    std::stop_token stop,
+    CredentialStore& store
+);

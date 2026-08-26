@@ -8,15 +8,15 @@
 #include <cstdio>
 #include <fcntl.h>
 #include <filesystem>
-#include <fstream>
-#include <iterator>
 #include <limits>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <nlohmann/json.hpp>
+#include <openssl/crypto.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -25,6 +25,19 @@
 #include <vector>
 
 namespace {
+
+constexpr std::array<uint8_t, 8> STORE_MAGIC{
+    'V', 'F', 'I', 'D', 'O', '2', 'D', 'B'
+};
+constexpr uint8_t STORE_FORMAT_VERSION = 1;
+constexpr std::size_t GENERATION_SIZE = 8;
+constexpr std::size_t NONCE_SIZE = 12;
+constexpr std::size_t TAG_SIZE = 16;
+constexpr std::size_t HEADER_SIZE =
+    STORE_MAGIC.size() + 1 + GENERATION_SIZE + NONCE_SIZE;
+constexpr std::size_t MAX_STORE_SIZE = 16 * 1024 * 1024;
+constexpr std::size_t MAX_CREDENTIALS = 4096;
+constexpr std::size_t MAX_CREDENTIAL_BLOB_SIZE = 4096;
 
 class UniqueFd {
 public:
@@ -157,6 +170,46 @@ void write_all(int fd, std::span<const uint8_t> bytes) {
     }
 }
 
+std::vector<uint8_t> read_all(int fd, std::size_t size) {
+    std::vector<uint8_t> contents(size);
+    std::size_t offset = 0;
+    while(offset < contents.size()) {
+        const ssize_t count = ::read(
+            fd,
+            contents.data() + offset,
+            contents.size() - offset
+        );
+        if(count == -1) {
+            const int error = errno;
+            if(error == EINTR) {
+                continue;
+            }
+            throw_system_error(error, "read credential store");
+        }
+        if(count == 0) {
+            throw std::runtime_error(
+                "Credential store was truncated while reading"
+            );
+        }
+        offset += static_cast<std::size_t>(count);
+    }
+    return contents;
+}
+
+void append_uint64_be(std::vector<uint8_t>& output, uint64_t value) {
+    for(int shift = 56; shift >= 0; shift -= 8) {
+        output.push_back(static_cast<uint8_t>(value >> shift));
+    }
+}
+
+uint64_t read_uint64_be(std::span<const uint8_t, GENERATION_SIZE> bytes) {
+    uint64_t value = 0;
+    for(const uint8_t byte : bytes) {
+        value = (value << 8) | byte;
+    }
+    return value;
+}
+
 std::string random_temporary_name() {
     std::array<uint8_t, 16> random_bytes{};
     openssl_random_bytes(random_bytes);
@@ -197,13 +250,15 @@ std::pair<UniqueFd, std::string> create_temporary_file(int directory_fd) {
 }
 
 void validate_credential(const StoredCredential& credential) {
-    if(credential.id.size() < 16) {
+    if(credential.id.size() < 16 || credential.id.size() > 1024) {
         throw std::invalid_argument(
-            "Credential ID must contain at least 16 bytes"
+            "Credential ID must contain between 16 and 1024 bytes"
         );
     }
-    if(credential.rpId.empty()) {
-        throw std::invalid_argument("Relying Party ID must not be empty");
+    if(credential.rpId.empty() || credential.rpId.size() > 253) {
+        throw std::invalid_argument(
+            "Relying Party ID must contain between 1 and 253 bytes"
+        );
     }
     if(credential.userId.empty() || credential.userId.size() > 64) {
         throw std::invalid_argument(
@@ -213,11 +268,17 @@ void validate_credential(const StoredCredential& credential) {
     if(credential.alg != -7) {
         throw std::invalid_argument("Unsupported credential algorithm");
     }
-    if(credential.private_blob.empty()) {
-        throw std::invalid_argument("Private credential blob must not be empty");
+    if(
+        credential.private_blob.empty() ||
+        credential.private_blob.size() > MAX_CREDENTIAL_BLOB_SIZE
+    ) {
+        throw std::invalid_argument("Invalid private credential blob size");
     }
-    if(credential.public_blob.empty()) {
-        throw std::invalid_argument("Public credential blob must not be empty");
+    if(
+        credential.public_blob.empty() ||
+        credential.public_blob.size() > MAX_CREDENTIAL_BLOB_SIZE
+    ) {
+        throw std::invalid_argument("Invalid public credential blob size");
     }
 }
 
@@ -281,14 +342,123 @@ UniqueFd open_store_directory(const std::filesystem::path& directory) {
         ::close(fd);
         throw std::runtime_error("Credential store parent is not a directory");
     }
-    if((status.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+    if(status.st_uid != ::geteuid()) {
         ::close(fd);
         throw std::runtime_error(
-            "Credential store directory must not be writable by group or others"
+            "Credential store directory must be owned by the service user"
+        );
+    }
+    if((status.st_mode & 0777) != 0700) {
+        ::close(fd);
+        throw std::runtime_error(
+            "Credential store directory permissions must be 0700"
         );
     }
 
     return UniqueFd(fd);
+}
+
+std::optional<std::vector<uint8_t>> read_store_file(
+    const std::filesystem::path& store_path,
+    bool legacy = false
+) {
+    const auto filename = store_path.filename();
+    if(filename.empty() || filename == "." || filename == "..") {
+        throw std::invalid_argument(
+            "Credential store path must include a valid filename"
+        );
+    }
+
+    auto directory_path = store_path.parent_path();
+    if(directory_path.empty()) {
+        directory_path = ".";
+    }
+
+    const int directory_fd = ::open(
+        directory_path.c_str(),
+        O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW
+    );
+    if(directory_fd == -1 && errno == ENOENT) {
+        return std::nullopt;
+    }
+    if(directory_fd == -1) {
+        throw_system_error(errno, "open credential store directory");
+    }
+    UniqueFd directory(directory_fd);
+
+    struct stat directory_status{};
+    if(::fstat(directory.get(), &directory_status) == -1) {
+        throw_system_error(errno, "inspect credential store directory");
+    }
+    if(!S_ISDIR(directory_status.st_mode)) {
+        throw std::runtime_error("Credential store parent is not a directory");
+    }
+    if(
+        directory_status.st_uid != ::geteuid() &&
+        (!legacy || directory_status.st_uid != 0)
+    ) {
+        throw std::runtime_error(
+            "Credential store directory must be owned by the service user"
+        );
+    }
+    if(
+        legacy
+            ? (directory_status.st_mode & (S_IWGRP | S_IWOTH)) != 0
+            : (directory_status.st_mode & 0777) != 0700
+    ) {
+        throw std::runtime_error(
+            legacy
+                ? "Legacy credential store directory is writable by group or others"
+                : "Credential store directory permissions must be 0700"
+        );
+    }
+
+    const int file_fd = ::openat(
+        directory.get(),
+        filename.c_str(),
+        O_RDONLY | O_CLOEXEC | O_NOFOLLOW
+    );
+    if(file_fd == -1 && errno == ENOENT) {
+        return std::nullopt;
+    }
+    if(file_fd == -1) {
+        throw_system_error(errno, "open credential store");
+    }
+    UniqueFd file(file_fd);
+
+    struct stat status{};
+    if(::fstat(file.get(), &status) == -1) {
+        throw_system_error(errno, "inspect credential store");
+    }
+    if(!S_ISREG(status.st_mode) || status.st_nlink != 1) {
+        throw std::runtime_error(
+            "Credential store must be a regular file with one link"
+        );
+    }
+    if(status.st_uid != ::geteuid() && (!legacy || status.st_uid != 0)) {
+        throw std::runtime_error(
+            "Credential store must be owned by the service user"
+        );
+    }
+    if(
+        legacy
+            ? (status.st_mode & (S_IRWXG | S_IRWXO)) != 0
+            : (status.st_mode & 0777) != 0600
+    ) {
+        throw std::runtime_error(
+            legacy
+                ? "Legacy credential store is accessible by group or others"
+                : "Credential store permissions must be 0600"
+        );
+    }
+    if(
+        status.st_size < 0 ||
+        static_cast<uintmax_t>(status.st_size) > MAX_STORE_SIZE
+    ) {
+        throw std::runtime_error("Credential store exceeds the size limit");
+    }
+
+    return read_all(file.get(), static_cast<std::size_t>(status.st_size));
 }
 
 void atomic_write_file(
@@ -352,6 +522,11 @@ std::vector<uint8_t> read_byte_array(
             std::string(field_name) + " is not a byte array"
         );
     }
+    if(value.size() > MAX_CREDENTIAL_BLOB_SIZE) {
+        throw std::runtime_error(
+            std::string(field_name) + " exceeds the size limit"
+        );
+    }
 
     std::vector<uint8_t> bytes;
     bytes.reserve(value.size());
@@ -374,11 +549,156 @@ std::vector<uint8_t> read_byte_array(
     return bytes;
 }
 
+template<typename Container>
+class CleanseBuffer {
+public:
+    explicit CleanseBuffer(Container& value) noexcept : value_(value) {}
+    ~CleanseBuffer() {
+        OPENSSL_cleanse(value_.data(), value_.size());
+    }
+
+    CleanseBuffer(const CleanseBuffer&) = delete;
+    CleanseBuffer& operator=(const CleanseBuffer&) = delete;
+
+private:
+    Container& value_;
+};
+
+std::vector<uint8_t> decrypt_legacy_store(
+    const std::vector<uint8_t>& ciphertext,
+    const std::vector<uint8_t>& key
+) {
+    if(key.size() != 32) {
+        throw std::invalid_argument("Legacy credential store key must be 32 bytes");
+    }
+    if(ciphertext.size() < NONCE_SIZE + TAG_SIZE) {
+        throw std::runtime_error("Legacy credential store is too short");
+    }
+
+    const uint8_t* nonce = ciphertext.data();
+    const uint8_t* tag = ciphertext.data() + NONCE_SIZE;
+    const uint8_t* encrypted = ciphertext.data() + NONCE_SIZE + TAG_SIZE;
+    const int encrypted_size = openssl_checked_size(
+        ciphertext.size() - NONCE_SIZE - TAG_SIZE,
+        "legacy credential ciphertext"
+    );
+
+    auto context = openssl_make_cipher_context();
+    openssl_check(
+        EVP_DecryptInit_ex(
+            context.get(), EVP_aes_256_gcm(), nullptr, nullptr, nullptr
+        ),
+        "legacy EVP_DecryptInit_ex"
+    );
+    openssl_check(
+        EVP_CIPHER_CTX_ctrl(
+            context.get(), EVP_CTRL_GCM_SET_IVLEN, NONCE_SIZE, nullptr
+        ),
+        "legacy EVP_CTRL_GCM_SET_IVLEN"
+    );
+    openssl_check(
+        EVP_DecryptInit_ex(
+            context.get(), nullptr, nullptr, key.data(), nonce
+        ),
+        "legacy EVP_DecryptInit_ex key and IV"
+    );
+    openssl_check(
+        EVP_CIPHER_CTX_ctrl(
+            context.get(),
+            EVP_CTRL_GCM_SET_TAG,
+            TAG_SIZE,
+            const_cast<uint8_t*>(tag)
+        ),
+        "legacy EVP_CTRL_GCM_SET_TAG"
+    );
+
+    std::vector<uint8_t> plaintext(
+        static_cast<std::size_t>(encrypted_size) + EVP_MAX_BLOCK_LENGTH
+    );
+    int output_size = 0;
+    openssl_check(
+        EVP_DecryptUpdate(
+            context.get(),
+            plaintext.data(),
+            &output_size,
+            encrypted,
+            encrypted_size
+        ),
+        "legacy EVP_DecryptUpdate"
+    );
+    int final_size = 0;
+    openssl_check(
+        EVP_DecryptFinal_ex(
+            context.get(),
+            plaintext.data() + output_size,
+            &final_size
+        ),
+        "legacy credential store authentication"
+    );
+    plaintext.resize(
+        static_cast<std::size_t>(output_size + final_size)
+    );
+    return plaintext;
+}
+
 } // namespace
 
-CredentialStore::CredentialStore(std::filesystem::path path, Key key) : storePath_(path), storeKey_(key) {
+CredentialStore::CredentialStore(
+    std::filesystem::path path,
+    Key key,
+    StoreGenerationCounter* generation_counter
+) :
+    storePath_(std::move(path)),
+    storeKey_(std::move(key)),
+    generationCounter_(generation_counter)
+{
     if(storeKey_.size() != 32) {
         throw std::invalid_argument("Credential store key must be 32 bytes");
+    }
+}
+
+CredentialStore::~CredentialStore() {
+    OPENSSL_cleanse(storeKey_.data(), storeKey_.size());
+}
+
+void CredentialStore::migrate_legacy(
+    const std::filesystem::path& legacy_path,
+    const std::filesystem::path& new_path,
+    Key legacy_key,
+    Key new_key,
+    StoreGenerationCounter& generation_counter
+) {
+    CleanseBuffer cleanse_legacy_key(legacy_key);
+    if(generation_counter.read() != 0) {
+        throw std::runtime_error(
+            "Migration requires a newly provisioned rollback counter"
+        );
+    }
+    if(read_store_file(new_path)) {
+        throw std::runtime_error("Refusing to overwrite an existing new store");
+    }
+
+    const auto legacy_encrypted = read_store_file(legacy_path, true);
+    if(!legacy_encrypted) {
+        throw std::runtime_error("Legacy credential store does not exist");
+    }
+    auto plaintext = decrypt_legacy_store(*legacy_encrypted, legacy_key);
+    CleanseBuffer cleanse_plaintext(plaintext);
+
+    CredentialStore migrated(
+        new_path,
+        std::move(new_key),
+        &generation_counter
+    );
+    const auto json = nlohmann::json::parse(
+        plaintext.begin(),
+        plaintext.end()
+    );
+    const auto storage = migrated.parse_storage(json);
+    migrated.save_storage(storage);
+    migrated.load();
+    if(migrated.stored_.size() != storage.size()) {
+        throw std::runtime_error("Migrated credential store verification failed");
     }
 }
 
@@ -394,7 +714,7 @@ std::string CredentialStore::toHex(const std::vector<uint8_t> &v) const {
     return s;
 }
 
-std::vector<uint8_t> CredentialStore::fromHex(const std::string &s) {
+std::vector<uint8_t> CredentialStore::fromHex(const std::string &s) const {
     std::vector<uint8_t> v;
     v.reserve(s.size() / 2);
     if(s.size() % 2) throw std::invalid_argument("Odd size string is given");
@@ -407,13 +727,32 @@ std::vector<uint8_t> CredentialStore::fromHex(const std::string &s) {
 }
 
 // Cryptography
-std::vector<uint8_t> CredentialStore::decrypt(std::vector<uint8_t> &ciphertext) {
-    if(ciphertext.size() < 28) throw std::runtime_error("Ciphertext is too short");
-    const uint8_t *iv = ciphertext.data();
-    const uint8_t *tag = ciphertext.data() + 12;
-    const uint8_t *cipher = ciphertext.data() + 28;
+CredentialStore::DecryptedStore CredentialStore::decrypt(
+    const std::vector<uint8_t>& ciphertext
+) const {
+    if(ciphertext.size() < HEADER_SIZE + TAG_SIZE) {
+        throw std::runtime_error("Credential store envelope is too short");
+    }
+    if(!std::equal(STORE_MAGIC.begin(), STORE_MAGIC.end(), ciphertext.begin())) {
+        throw std::runtime_error("Credential store has an invalid format marker");
+    }
+    if(ciphertext[STORE_MAGIC.size()] != STORE_FORMAT_VERSION) {
+        throw std::runtime_error("Credential store has an unsupported version");
+    }
+
+    const std::size_t generation_offset = STORE_MAGIC.size() + 1;
+    const uint64_t generation = read_uint64_be(
+        std::span<const uint8_t, GENERATION_SIZE>(
+            ciphertext.data() + generation_offset,
+            GENERATION_SIZE
+        )
+    );
+    const uint8_t* iv =
+        ciphertext.data() + generation_offset + GENERATION_SIZE;
+    const uint8_t* cipher = ciphertext.data() + HEADER_SIZE;
+    const uint8_t* tag = ciphertext.data() + ciphertext.size() - TAG_SIZE;
     const int ctlen = openssl_checked_size(
-        ciphertext.size() - 28,
+        ciphertext.size() - HEADER_SIZE - TAG_SIZE,
         "credential ciphertext"
     );
 
@@ -426,7 +765,7 @@ std::vector<uint8_t> CredentialStore::decrypt(std::vector<uint8_t> &ciphertext) 
     );
     openssl_check(
         EVP_CIPHER_CTX_ctrl(
-            context.get(), EVP_CTRL_GCM_SET_IVLEN, 12, nullptr
+            context.get(), EVP_CTRL_GCM_SET_IVLEN, NONCE_SIZE, nullptr
         ),
         "EVP_CTRL_GCM_SET_IVLEN"
     );
@@ -440,7 +779,7 @@ std::vector<uint8_t> CredentialStore::decrypt(std::vector<uint8_t> &ciphertext) 
         EVP_CIPHER_CTX_ctrl(
             context.get(),
             EVP_CTRL_GCM_SET_TAG,
-            16,
+            TAG_SIZE,
             const_cast<uint8_t *>(tag)
         ),
         "EVP_CTRL_GCM_SET_TAG"
@@ -450,6 +789,16 @@ std::vector<uint8_t> CredentialStore::decrypt(std::vector<uint8_t> &ciphertext) 
         static_cast<std::size_t>(ctlen) + EVP_MAX_BLOCK_LENGTH
     );
     int outl = 0;
+    openssl_check(
+        EVP_DecryptUpdate(
+            context.get(),
+            nullptr,
+            &outl,
+            ciphertext.data(),
+            openssl_checked_size(HEADER_SIZE, "credential store header")
+        ),
+        "EVP_DecryptUpdate AAD"
+    );
     openssl_check(
         EVP_DecryptUpdate(
             context.get(), plain.data(), &outl, cipher, ctlen
@@ -462,13 +811,27 @@ std::vector<uint8_t> CredentialStore::decrypt(std::vector<uint8_t> &ciphertext) 
         "EVP_DecryptFinal_ex (GCM authentication failed)"
     );
 
-    plain.resize(outl + finlen);
-    return plain;
+    plain.resize(static_cast<std::size_t>(outl + finlen));
+    return DecryptedStore{
+        .generation = generation,
+        .plaintext = std::move(plain)
+    };
 }
 
-std::vector<uint8_t> CredentialStore::encrypt(std::vector<uint8_t> &plaintext) {
-    std::vector<uint8_t> iv(12);
+std::vector<uint8_t> CredentialStore::encrypt(
+    const std::vector<uint8_t>& plaintext,
+    uint64_t generation
+) const {
+    std::array<uint8_t, NONCE_SIZE> iv{};
     openssl_random_bytes(iv);
+
+    std::vector<uint8_t> out;
+    out.reserve(HEADER_SIZE + plaintext.size() + TAG_SIZE);
+    out.insert(out.end(), STORE_MAGIC.begin(), STORE_MAGIC.end());
+    out.push_back(STORE_FORMAT_VERSION);
+    append_uint64_be(out, generation);
+    out.insert(out.end(), iv.begin(), iv.end());
+
     auto context = openssl_make_cipher_context();
     openssl_check(
         EVP_EncryptInit_ex(
@@ -478,7 +841,7 @@ std::vector<uint8_t> CredentialStore::encrypt(std::vector<uint8_t> &plaintext) {
     );
     openssl_check(
         EVP_CIPHER_CTX_ctrl(
-            context.get(), EVP_CTRL_GCM_SET_IVLEN, 12, nullptr
+            context.get(), EVP_CTRL_GCM_SET_IVLEN, NONCE_SIZE, nullptr
         ),
         "EVP_CTRL_GCM_SET_IVLEN"
     );
@@ -489,8 +852,19 @@ std::vector<uint8_t> CredentialStore::encrypt(std::vector<uint8_t> &plaintext) {
         "EVP_EncryptInit_ex key and IV"
     );
 
-    std::vector<uint8_t> cipher(plaintext.size() + EVP_MAX_BLOCK_LENGTH);
     int outl = 0;
+    openssl_check(
+        EVP_EncryptUpdate(
+            context.get(),
+            nullptr,
+            &outl,
+            out.data(),
+            openssl_checked_size(out.size(), "credential store header")
+        ),
+        "EVP_EncryptUpdate AAD"
+    );
+
+    std::vector<uint8_t> cipher(plaintext.size() + EVP_MAX_BLOCK_LENGTH);
     openssl_check(
         EVP_EncryptUpdate(
             context.get(),
@@ -507,23 +881,41 @@ std::vector<uint8_t> CredentialStore::encrypt(std::vector<uint8_t> &plaintext) {
         "EVP_EncryptFinal_ex"
     );
 
-    std::vector<uint8_t> tag(16);
+    std::array<uint8_t, TAG_SIZE> tag{};
     openssl_check(
         EVP_CIPHER_CTX_ctrl(
-            context.get(), EVP_CTRL_GCM_GET_TAG, 16, tag.data()
+            context.get(), EVP_CTRL_GCM_GET_TAG, TAG_SIZE, tag.data()
         ),
         "EVP_CTRL_GCM_GET_TAG"
     );
 
-    std::vector<uint8_t> out;
-    out.insert(out.end(), iv.begin(), iv.end());
-    out.insert(out.end(), tag.begin(), tag.end());
     out.insert(out.end(), cipher.begin(), cipher.begin() + outl + final_len);
+    out.insert(out.end(), tag.begin(), tag.end());
     return out;
 }
 
 // Saving credentials to the file
 void CredentialStore::save_storage(const Storage& storage) {
+    if(requiresReload_) {
+        throw std::runtime_error(
+            "Credential store must be reloaded after an interrupted commit"
+        );
+    }
+
+    uint64_t current_generation = generation_;
+    if(generationCounter_ != nullptr) {
+        current_generation = generationCounter_->read();
+        if(current_generation != generation_) {
+            throw std::runtime_error(
+                "Credential store generation changed unexpectedly"
+            );
+        }
+    }
+    if(current_generation == std::numeric_limits<uint64_t>::max()) {
+        throw std::overflow_error("Credential store generation overflow");
+    }
+    const uint64_t next_generation = current_generation + 1;
+
     using namespace nlohmann;
     json j = json::array();
     for(const auto& item : storage) {
@@ -541,17 +933,35 @@ void CredentialStore::save_storage(const Storage& storage) {
         });
     }
     std::string plaintext = j.dump();
+    CleanseBuffer cleanse_plaintext(plaintext);
     std::vector<uint8_t> plain(plaintext.begin(), plaintext.end());
-    auto encrypted = encrypt(plain);
+    CleanseBuffer cleanse_plain(plain);
+    auto encrypted = encrypt(plain, next_generation);
     atomic_write_file(storePath_, encrypted);
+
+    if(generationCounter_ != nullptr) {
+        try {
+            generationCounter_->increment();
+            if(generationCounter_->read() != next_generation) {
+                throw std::runtime_error(
+                    "Credential store counter did not advance exactly once"
+                );
+            }
+        } catch(...) {
+            requiresReload_ = true;
+            throw;
+        }
+    }
+    generation_ = next_generation;
 }
 
-void CredentialStore::save() {
-    save_storage(stored_);
-}
-
-CredentialStore::Storage CredentialStore::parse_storage(const nlohmann::json &json) {
+CredentialStore::Storage CredentialStore::parse_storage(
+    const nlohmann::json& json
+) const {
     if(!json.is_array()) throw std::runtime_error("Storage is not an array");
+    if(json.size() > MAX_CREDENTIALS) {
+        throw std::runtime_error("Credential store contains too many credentials");
+    }
     Storage loaded;
 
     for(const auto &entry : json) {
@@ -592,18 +1002,59 @@ CredentialStore::Storage CredentialStore::parse_storage(const nlohmann::json &js
 
 void CredentialStore::load() {
     using namespace nlohmann;
-    if(!std::filesystem::exists(storePath_)) return;
+    const auto encrypted = read_store_file(storePath_);
+    if(!encrypted) {
+        if(generationCounter_ != nullptr && generationCounter_->read() != 0) {
+            throw std::runtime_error(
+                "Credential store is missing but its rollback counter is not zero"
+            );
+        }
+        stored_.clear();
+        generation_ = 0;
+        requiresReload_ = false;
+        return;
+    }
 
-    std::ifstream f(storePath_, std::ios::binary);
-    std::vector<uint8_t> enc_blob(
-            (std::istreambuf_iterator<char>(f)),
-            std::istreambuf_iterator<char>()
+    auto decrypted = decrypt(*encrypted);
+    CleanseBuffer cleanse_plaintext(decrypted.plaintext);
+    const uint64_t counter_generation = generationCounter_ == nullptr
+        ? decrypted.generation
+        : generationCounter_->read();
+    if(decrypted.generation < counter_generation) {
+        throw std::runtime_error("Credential store rollback detected");
+    }
+    if(
+        decrypted.generation > counter_generation &&
+        (
+            counter_generation == std::numeric_limits<uint64_t>::max() ||
+            decrypted.generation != counter_generation + 1
+        )
+    ) {
+        throw std::runtime_error("Credential store generation is inconsistent");
+    }
+
+    json j = json::parse(
+        decrypted.plaintext.begin(),
+        decrypted.plaintext.end()
     );
-    auto plain = decrypt(enc_blob);
-    json j = json::parse(plain.begin(), plain.end());
 
     auto loaded = parse_storage(j);
+
+    if(
+        generationCounter_ != nullptr &&
+        decrypted.generation == counter_generation + 1
+    ) {
+        generationCounter_->increment();
+        if(generationCounter_->read() != decrypted.generation) {
+            throw std::runtime_error(
+                "Credential store crash recovery counter verification failed"
+            );
+        }
+    }
+
     stored_.swap(loaded);
+    generation_ = decrypted.generation;
+    requiresReload_ = false;
 }
 
 // Public API
@@ -630,7 +1081,7 @@ const StoredCredential& CredentialStore::get_by_credId(const std::vector<uint8_t
     return stored_.at(toHex(credId));
 }
 
-const CredentialStore::Storage CredentialStore::get_all_creds() const
+CredentialStore::Storage CredentialStore::get_all_creds() const
 {
     return stored_;
 }

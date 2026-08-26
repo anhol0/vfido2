@@ -58,7 +58,11 @@ class CTAPMakeCredentialRequest {
         std::vector<uint8_t> pinAuth;
         uint64_t pinProtocol = 0;
         bool parseRequest(std::vector<uint8_t> &payload);
-        std::vector<uint8_t> build_response(UHIDReport &r, std::stop_token stop);
+        std::vector<uint8_t> build_response(
+            UHIDReport& r,
+            std::stop_token stop,
+            CredentialStore& store
+        );
     private:
         void parse_client_data_hash(CborValue &map); // Required
         void parse_rp(CborValue &map);               // Required

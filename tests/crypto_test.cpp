@@ -4,9 +4,11 @@
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
+#include <fcntl.h>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -33,6 +35,37 @@ void check(bool condition, const char* expression, int line) {
 }
 
 #define CHECK(expression) check((expression), #expression, __LINE__)
+
+class FakeGenerationCounter final : public StoreGenerationCounter {
+public:
+    explicit FakeGenerationCounter(uint64_t value = 0) : value_(value) {}
+
+    uint64_t read() override {
+        return value_;
+    }
+
+    void increment() override {
+        if(failNextIncrement) {
+            failNextIncrement = false;
+            throw std::runtime_error("simulated counter increment failure");
+        }
+        if(value_ == std::numeric_limits<uint64_t>::max()) {
+            throw std::overflow_error("counter overflow");
+        }
+        ++value_;
+        ++incrementCount;
+    }
+
+    void set(uint64_t value) {
+        value_ = value;
+    }
+
+    bool failNextIncrement = false;
+    std::size_t incrementCount = 0;
+
+private:
+    uint64_t value_;
+};
 
 class TemporaryStore {
 public:
@@ -120,13 +153,21 @@ StoredCredential make_credential() {
 void write_encrypted_json(
     const std::filesystem::path& path,
     const std::vector<uint8_t>& key,
-    const nlohmann::json& value
+    const nlohmann::json& value,
+    uint64_t generation = 1
 ) {
     const std::string serialized = value.dump();
     const std::vector<uint8_t> plaintext(
         serialized.begin(), serialized.end()
     );
     const std::array<uint8_t, 12> iv{};
+    std::vector<uint8_t> header{
+        'V', 'F', 'I', 'D', 'O', '2', 'D', 'B', 1
+    };
+    for(int shift = 56; shift >= 0; shift -= 8) {
+        header.push_back(static_cast<uint8_t>(generation >> shift));
+    }
+    header.insert(header.end(), iv.begin(), iv.end());
 
     auto context = openssl_make_cipher_context();
     openssl_check(
@@ -152,6 +193,16 @@ void write_encrypted_json(
         plaintext.size() + EVP_MAX_BLOCK_LENGTH
     );
     int ciphertext_length = 0;
+    openssl_check(
+        EVP_EncryptUpdate(
+            context.get(),
+            nullptr,
+            &ciphertext_length,
+            header.data(),
+            openssl_checked_size(header.size(), "test envelope header")
+        ),
+        "test EVP_EncryptUpdate AAD"
+    );
     openssl_check(
         EVP_EncryptUpdate(
             context.get(),
@@ -184,18 +235,124 @@ void write_encrypted_json(
     std::ofstream file(path, std::ios::binary);
     CHECK(static_cast<bool>(file));
     file.write(
-        reinterpret_cast<const char *>(iv.data()),
-        static_cast<std::streamsize>(iv.size())
-    );
-    file.write(
-        reinterpret_cast<const char *>(tag.data()),
-        static_cast<std::streamsize>(tag.size())
+        reinterpret_cast<const char *>(header.data()),
+        static_cast<std::streamsize>(header.size())
     );
     file.write(
         reinterpret_cast<const char *>(ciphertext.data()),
         ciphertext_length + final_length
     );
+    file.write(
+        reinterpret_cast<const char *>(tag.data()),
+        static_cast<std::streamsize>(tag.size())
+    );
     CHECK(static_cast<bool>(file));
+    file.close();
+    CHECK(::chmod(path.c_str(), 0600) == 0);
+}
+
+void write_legacy_encrypted_json(
+    const std::filesystem::path& path,
+    const std::vector<uint8_t>& key,
+    const nlohmann::json& value
+) {
+    const std::string serialized = value.dump();
+    const std::vector<uint8_t> plaintext(serialized.begin(), serialized.end());
+    const std::array<uint8_t, 12> nonce{};
+
+    auto context = openssl_make_cipher_context();
+    openssl_check(
+        EVP_EncryptInit_ex(
+            context.get(), EVP_aes_256_gcm(), nullptr, nullptr, nullptr
+        ),
+        "legacy test EVP_EncryptInit_ex"
+    );
+    openssl_check(
+        EVP_CIPHER_CTX_ctrl(
+            context.get(), EVP_CTRL_GCM_SET_IVLEN, nonce.size(), nullptr
+        ),
+        "legacy test EVP_CTRL_GCM_SET_IVLEN"
+    );
+    openssl_check(
+        EVP_EncryptInit_ex(
+            context.get(), nullptr, nullptr, key.data(), nonce.data()
+        ),
+        "legacy test EVP_EncryptInit_ex key and IV"
+    );
+
+    std::vector<uint8_t> ciphertext(
+        plaintext.size() + EVP_MAX_BLOCK_LENGTH
+    );
+    int ciphertext_size = 0;
+    openssl_check(
+        EVP_EncryptUpdate(
+            context.get(),
+            ciphertext.data(),
+            &ciphertext_size,
+            plaintext.data(),
+            openssl_checked_size(plaintext.size(), "legacy test plaintext")
+        ),
+        "legacy test EVP_EncryptUpdate"
+    );
+    int final_size = 0;
+    openssl_check(
+        EVP_EncryptFinal_ex(
+            context.get(),
+            ciphertext.data() + ciphertext_size,
+            &final_size
+        ),
+        "legacy test EVP_EncryptFinal_ex"
+    );
+
+    std::array<uint8_t, 16> tag{};
+    openssl_check(
+        EVP_CIPHER_CTX_ctrl(
+            context.get(), EVP_CTRL_GCM_GET_TAG, tag.size(), tag.data()
+        ),
+        "legacy test EVP_CTRL_GCM_GET_TAG"
+    );
+
+    std::ofstream file(path, std::ios::binary);
+    CHECK(static_cast<bool>(file));
+    file.write(
+        reinterpret_cast<const char*>(nonce.data()),
+        static_cast<std::streamsize>(nonce.size())
+    );
+    file.write(
+        reinterpret_cast<const char*>(tag.data()),
+        static_cast<std::streamsize>(tag.size())
+    );
+    file.write(
+        reinterpret_cast<const char*>(ciphertext.data()),
+        ciphertext_size + final_size
+    );
+    CHECK(static_cast<bool>(file));
+    file.close();
+    CHECK(::chmod(path.c_str(), 0600) == 0);
+}
+
+std::vector<uint8_t> read_file(const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary);
+    CHECK(static_cast<bool>(file));
+    return {
+        std::istreambuf_iterator<char>(file),
+        std::istreambuf_iterator<char>()
+    };
+}
+
+void write_file(
+    const std::filesystem::path& path,
+    const std::vector<uint8_t>& contents
+) {
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    CHECK(static_cast<bool>(file));
+    file.write(
+        reinterpret_cast<const char*>(contents.data()),
+        static_cast<std::streamsize>(contents.size())
+    );
+    CHECK(static_cast<bool>(file));
+    file.close();
+    CHECK(::chmod(path.c_str(), 0600) == 0);
 }
 
 nlohmann::json valid_storage_entry() {
@@ -222,7 +379,7 @@ void test_hex_decoder_rejects_malformed_input() {
     for(const std::string_view malformed : {"0", "0G", "G0", "+1", " 1"}) {
         bool rejected = false;
         try {
-            store.fromHex(std::string(malformed));
+            (void)store.fromHex(std::string(malformed));
         } catch(const std::invalid_argument&) {
             rejected = true;
         }
@@ -398,6 +555,232 @@ void test_modified_ciphertext_is_rejected() {
     CHECK(rejected);
 }
 
+void test_authenticated_header_rejects_generation_tampering() {
+    TemporaryStore temporary;
+    const std::vector<uint8_t> key(32, 0x5B);
+
+    CredentialStore writer(temporary.path(), key);
+    writer.put(make_credential());
+
+    auto contents = read_file(temporary.path());
+    CHECK(contents.size() > 16);
+    contents[16] ^= 0x01;
+    write_file(temporary.path(), contents);
+
+    CredentialStore reader(temporary.path(), key);
+    bool rejected = false;
+    try {
+        reader.load();
+    } catch(const std::runtime_error&) {
+        rejected = true;
+    }
+    CHECK(rejected);
+}
+
+void test_rollback_is_rejected() {
+    TemporaryStore temporary;
+    const std::vector<uint8_t> key(32, 0x5C);
+    FakeGenerationCounter counter;
+
+    CredentialStore writer(temporary.path(), key, &counter);
+    writer.put(make_credential());
+    const auto old_contents = read_file(temporary.path());
+    writer.incrementSigCount(make_credential().id);
+    CHECK(counter.read() == 2);
+
+    write_file(temporary.path(), old_contents);
+    CredentialStore reader(temporary.path(), key, &counter);
+    bool rejected = false;
+    try {
+        reader.load();
+    } catch(const std::runtime_error&) {
+        rejected = true;
+    }
+    CHECK(rejected);
+}
+
+void test_interrupted_commit_is_reconciled_after_authentication() {
+    TemporaryStore temporary;
+    const std::vector<uint8_t> key(32, 0x5D);
+    FakeGenerationCounter counter;
+
+    CredentialStore writer(temporary.path(), key, &counter);
+    writer.put(make_credential());
+    CHECK(counter.read() == 1);
+
+    counter.set(0);
+    CredentialStore reader(temporary.path(), key, &counter);
+    reader.load();
+
+    CHECK(counter.read() == 1);
+    CHECK(counter.incrementCount == 2);
+    CHECK(reader.has(make_credential().id));
+}
+
+void test_failed_counter_commit_requires_reload_and_recovers() {
+    TemporaryStore temporary;
+    const std::vector<uint8_t> key(32, 0x5E);
+    FakeGenerationCounter counter;
+    counter.failNextIncrement = true;
+
+    CredentialStore writer(temporary.path(), key, &counter);
+    bool failed = false;
+    try {
+        writer.put(make_credential());
+    } catch(const std::runtime_error&) {
+        failed = true;
+    }
+    CHECK(failed);
+    CHECK(counter.read() == 0);
+    CHECK(!writer.has(make_credential().id));
+
+    bool refused_second_write = false;
+    try {
+        writer.put(make_credential());
+    } catch(const std::runtime_error&) {
+        refused_second_write = true;
+    }
+    CHECK(refused_second_write);
+
+    CredentialStore reader(temporary.path(), key, &counter);
+    reader.load();
+    CHECK(counter.read() == 1);
+    CHECK(reader.has(make_credential().id));
+}
+
+void test_missing_store_with_nonzero_counter_is_rejected() {
+    TemporaryStore temporary;
+    const std::vector<uint8_t> key(32, 0x5F);
+    FakeGenerationCounter counter(1);
+    CredentialStore reader(temporary.path(), key, &counter);
+
+    bool rejected = false;
+    try {
+        reader.load();
+    } catch(const std::runtime_error&) {
+        rejected = true;
+    }
+    CHECK(rejected);
+}
+
+void test_insecure_file_permissions_are_rejected() {
+    TemporaryStore temporary;
+    const std::vector<uint8_t> key(32, 0x60);
+    CredentialStore writer(temporary.path(), key);
+    writer.put(make_credential());
+    CHECK(::chmod(temporary.path().c_str(), 0640) == 0);
+
+    CredentialStore reader(temporary.path(), key);
+    bool rejected = false;
+    try {
+        reader.load();
+    } catch(const std::runtime_error&) {
+        rejected = true;
+    }
+    CHECK(rejected);
+}
+
+void test_symlink_store_is_rejected() {
+    TemporaryStore temporary;
+    const std::vector<uint8_t> key(32, 0x61);
+    const auto target = temporary.directory() / "target.bin";
+    CredentialStore writer(target, key);
+    writer.put(make_credential());
+    CHECK(::symlink(target.c_str(), temporary.path().c_str()) == 0);
+
+    CredentialStore reader(temporary.path(), key);
+    bool rejected = false;
+    try {
+        reader.load();
+    } catch(const std::system_error&) {
+        rejected = true;
+    }
+    CHECK(rejected);
+}
+
+void test_oversized_store_is_rejected_before_reading() {
+    TemporaryStore temporary;
+    const std::vector<uint8_t> key(32, 0x62);
+    const int fd = ::open(
+        temporary.path().c_str(),
+        O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC,
+        0600
+    );
+    CHECK(fd >= 0);
+    CHECK(::ftruncate(fd, 16 * 1024 * 1024 + 1) == 0);
+    CHECK(::close(fd) == 0);
+
+    CredentialStore reader(temporary.path(), key);
+    bool rejected = false;
+    try {
+        reader.load();
+    } catch(const std::runtime_error&) {
+        rejected = true;
+    }
+    CHECK(rejected);
+}
+
+void test_legacy_store_migration() {
+    TemporaryStore temporary;
+    const auto legacy_path = temporary.directory() / "legacy.bin";
+    const auto new_path = temporary.directory() / "migrated.bin";
+    const std::vector<uint8_t> legacy_key(32, 0x63);
+    const std::vector<uint8_t> new_key(32, 0x64);
+    FakeGenerationCounter counter;
+
+    write_legacy_encrypted_json(
+        legacy_path,
+        legacy_key,
+        nlohmann::json::array({valid_storage_entry()})
+    );
+    CredentialStore::migrate_legacy(
+        legacy_path,
+        new_path,
+        legacy_key,
+        new_key,
+        counter
+    );
+
+    CHECK(counter.read() == 1);
+    CHECK(std::filesystem::exists(legacy_path));
+    CredentialStore reader(new_path, new_key, &counter);
+    reader.load();
+    CHECK(reader.get_all_creds().size() == 1);
+}
+
+void test_failed_legacy_migration_preserves_source() {
+    TemporaryStore temporary;
+    const auto legacy_path = temporary.directory() / "legacy.bin";
+    const auto new_path = temporary.directory() / "migrated.bin";
+    const std::vector<uint8_t> legacy_key(32, 0x65);
+    const std::vector<uint8_t> wrong_key(32, 0x66);
+    const std::vector<uint8_t> new_key(32, 0x67);
+    FakeGenerationCounter counter;
+
+    write_legacy_encrypted_json(
+        legacy_path,
+        legacy_key,
+        nlohmann::json::array({valid_storage_entry()})
+    );
+    bool rejected = false;
+    try {
+        CredentialStore::migrate_legacy(
+            legacy_path,
+            new_path,
+            wrong_key,
+            new_key,
+            counter
+        );
+    } catch(const std::runtime_error&) {
+        rejected = true;
+    }
+
+    CHECK(rejected);
+    CHECK(counter.read() == 0);
+    CHECK(std::filesystem::exists(legacy_path));
+    CHECK(!std::filesystem::exists(new_path));
+}
+
 void test_wrong_key_size_is_rejected() {
     TemporaryStore temporary;
     const std::vector<uint8_t> short_key(31, 0x00);
@@ -424,6 +807,16 @@ int main() {
         test_duplicate_credential_id_is_rejected();
         test_invalid_blob_values_are_rejected();
         test_modified_ciphertext_is_rejected();
+        test_authenticated_header_rejects_generation_tampering();
+        test_rollback_is_rejected();
+        test_interrupted_commit_is_reconciled_after_authentication();
+        test_failed_counter_commit_requires_reload_and_recovers();
+        test_missing_store_with_nonzero_counter_is_rejected();
+        test_insecure_file_permissions_are_rejected();
+        test_symlink_store_is_rejected();
+        test_oversized_store_is_rejected_before_reading();
+        test_legacy_store_migration();
+        test_failed_legacy_migration_preserves_source();
         test_wrong_key_size_is_rejected();
     } catch(const std::exception& error) {
         std::cerr << error.what() << '\n';

@@ -1,59 +1,252 @@
-#include <exception>
+#include <cerrno>
+#include <array>
+#include <cstdlib>
+#include <fcntl.h>
+#include <filesystem>
+#include <iostream>
+#include <optional>
 #include <stdexcept>
-#include <stdio.h>
-#include <stdint.h>
+#include <string>
+#include <system_error>
+#include <string_view>
 
+#include <openssl/crypto.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+#include "credentials/credential.hpp"
+#include "cryptography/store_security.hpp"
 #include "cryptography/tpm.hpp"
 #include "device.hpp"
 #include "event.hpp"
-#include "credentials/credential.hpp"
-#include <nlohmann/detail/exceptions.hpp>
-#include <iostream>
-#include <system_error>
 
-// Store is a global variable and not protected by a mutex, atomic or any synchronization object
-// This is done intentionally. It can be accessed only by one thread at a time no matter what
-// It is only utilized when getAssertion and makeCredential requests are sent.
-// There can't be multiple concurrent operations of this type by the specification of CTAPHID protocol
-// It is totally safe to leave it as is
-CredentialStore store{
-    "/etc/vfido2/cred.bin",
-    get_or_create_store_key()
+namespace {
+
+constexpr const char* STORE_PATH = "/var/lib/vfido/credentials.v1";
+constexpr const char* LEGACY_STORE_PATH = "/etc/vfido2/cred.bin";
+constexpr const char* CREDENTIAL_NAME = "vfido-db-auth";
+
+class UniqueFd {
+public:
+    explicit UniqueFd(int fd) noexcept : fd_(fd) {}
+    ~UniqueFd() {
+        if(fd_ >= 0) {
+            ::close(fd_);
+        }
+    }
+
+    UniqueFd(const UniqueFd&) = delete;
+    UniqueFd& operator=(const UniqueFd&) = delete;
+
+    [[nodiscard]] int get() const noexcept {
+        return fd_;
+    }
+
+private:
+    int fd_;
 };
 
-int main() {
-    // Device can be local since it is only used in the main event loop
-    // Only run() method is responsible for dealing with FIDODevice
-    FIDODevice device;
+struct Authorization {
+    Authorization() = default;
+    ~Authorization() {
+        OPENSSL_cleanse(bytes.data(), bytes.size());
+    }
+
+    Authorization(const Authorization&) = delete;
+    Authorization& operator=(const Authorization&) = delete;
+
+    [[nodiscard]] std::string_view view() const noexcept {
+        return {bytes.data(), size};
+    }
+
+    std::array<char, 34> bytes{};
+    std::size_t size = 0;
+};
+
+struct Options {
+    std::string command = "run";
+    std::optional<std::filesystem::path> authorizationPath;
+};
+
+[[noreturn]] void usage_error(const std::string& message) {
+    throw std::invalid_argument(
+        message + "\nUsage: vfido [run|provision|migrate] [--auth-file PATH]"
+    );
+}
+
+Options parse_options(int argc, char** argv) {
+    Options options;
+    int index = 1;
+    if(index < argc && argv[index][0] != '-') {
+        options.command = argv[index++];
+    }
+    if(
+        options.command != "run" &&
+        options.command != "provision" &&
+        options.command != "migrate"
+    ) {
+        usage_error("Unknown command: " + options.command);
+    }
+
+    while(index < argc) {
+        const std::string argument = argv[index++];
+        if(argument != "--auth-file" || index >= argc) {
+            usage_error("Unknown or incomplete option: " + argument);
+        }
+        if(options.authorizationPath) {
+            usage_error("--auth-file may be specified only once");
+        }
+        options.authorizationPath = argv[index++];
+    }
+    return options;
+}
+
+std::filesystem::path authorization_path(const Options& options) {
+    if(options.authorizationPath) {
+        return *options.authorizationPath;
+    }
+
+    const char* credential_directory = std::getenv("CREDENTIALS_DIRECTORY");
+    if(credential_directory == nullptr || credential_directory[0] == '\0') {
+        throw std::runtime_error(
+            "No database authorization credential was provided; use "
+            "--auth-file or the systemd vfido-db-auth credential"
+        );
+    }
+    return std::filesystem::path(credential_directory) / CREDENTIAL_NAME;
+}
+
+void read_authorization(
+    const std::filesystem::path& path,
+    Authorization& authorization
+) {
+    const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if(fd == -1) {
+        throw std::system_error(
+            errno,
+            std::generic_category(),
+            "open database authorization credential"
+        );
+    }
+    UniqueFd file(fd);
+
+    struct stat status{};
+    if(::fstat(file.get(), &status) == -1) {
+        throw std::system_error(
+            errno,
+            std::generic_category(),
+            "inspect database authorization credential"
+        );
+    }
+    if(!S_ISREG(status.st_mode) || status.st_nlink != 1) {
+        throw std::runtime_error(
+            "Database authorization credential must be a regular file with "
+            "one link"
+        );
+    }
+    if(status.st_uid != ::geteuid() && status.st_uid != 0) {
+        throw std::runtime_error(
+            "Database authorization credential must be owned by root or the "
+            "service user"
+        );
+    }
+    if((status.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+        throw std::runtime_error(
+            "Database authorization credential must not be writable by "
+            "group or others"
+        );
+    }
+    if(status.st_size < 1 || status.st_size > 34) {
+        throw std::runtime_error(
+            "Database authorization credential has an invalid size"
+        );
+    }
+
+    authorization.size = static_cast<std::size_t>(status.st_size);
+    std::size_t offset = 0;
+    while(offset < authorization.size) {
+        const ssize_t count = ::read(
+            file.get(),
+            authorization.bytes.data() + offset,
+            authorization.size - offset
+        );
+        if(count == -1 && errno == EINTR) {
+            continue;
+        }
+        if(count <= 0) {
+            throw std::runtime_error(
+                "Could not read the database authorization credential"
+            );
+        }
+        offset += static_cast<std::size_t>(count);
+    }
+
+    if(
+        authorization.size > 0 &&
+        authorization.bytes[authorization.size - 1] == '\n'
+    ) {
+        authorization.bytes[--authorization.size] = '\0';
+    }
+    if(
+        authorization.size > 0 &&
+        authorization.bytes[authorization.size - 1] == '\r'
+    ) {
+        authorization.bytes[--authorization.size] = '\0';
+    }
+    if(
+        authorization.size == 0 ||
+        authorization.size > 32 ||
+        authorization.view().find('\0') != std::string_view::npos
+    ) {
+        throw std::runtime_error(
+            "Database authorization must contain 1 to 32 non-NUL bytes"
+        );
+    }
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
     try {
-        device.init();
+        const Options options = parse_options(argc, argv);
+        Authorization authorization;
+        read_authorization(authorization_path(options), authorization);
+        FapiStoreSecurity security(authorization.view());
+
+        if(options.command == "provision") {
+            security.provision();
+            std::cout << "Database key and rollback counter provisioned\n";
+            return 0;
+        }
+
+        if(options.command == "migrate") {
+            CredentialStore::migrate_legacy(
+                LEGACY_STORE_PATH,
+                STORE_PATH,
+                read_legacy_store_key(),
+                security.unseal_key(),
+                security
+            );
+            delete_legacy_store_key();
+            std::cout << "Legacy credential store migrated; the old file was "
+                         "retained and its TPM key was deleted\n";
+            return 0;
+        }
+
+        CredentialStore store(
+            STORE_PATH,
+            security.unseal_key(),
+            &security
+        );
         store.load();
-    } catch (nlohmann::detail::parse_error &e) {
-        std::cout << "Credential storage parsing error: " << e.what() << std::endl;
-        return 1;
-    } catch (nlohmann::json::type_error &e) {
-        std::cout << "Credential Map validation error: " << e.what() << std::endl;
-        return 1;
-    } catch (nlohmann::json::exception &e) {
-        std::cout << "Exception for JSON: " << e.what() << std::endl;
-        return 1;
-    } catch (std::system_error &e) {
-        std::cout << "System error occured: " << e.what() << "[Code " << e.code() << "]" << std::endl;
-        return 1;
-    } catch (std::runtime_error &e) {
-        std::cout << "Credential Map valication error: " << e.what() << std::endl;
-        return 1;
-    } catch (std::invalid_argument &e){
-        std::cout << "Conversion error: " << e.what() << std::endl;
-        return 1;
-    } catch (std::out_of_range &e) {
-        std::cout << "Conversion out of range: " << e.what() << std::endl;
-        return 1;
-    } catch (std::exception &e) {
-        std::cout << "Other exception is caught: " << e.what() << std::endl;
+
+        FIDODevice device;
+        device.init();
+        std::cout << "UHID device created\n";
+        run(device, store);
+        return 0;
+    } catch(const std::exception& error) {
+        std::cerr << "vfido: " << error.what() << '\n';
         return 1;
     }
-    printf("UHID device created\n");
-    run(device);
-    return 0;
 }

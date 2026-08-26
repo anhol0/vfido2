@@ -1,6 +1,7 @@
 #pragma once
 
 #include "error.hpp"
+#include "credentials/credential.hpp"
 #include "uhid_report.hpp"
 #include "response.hpp"
 
@@ -35,6 +36,10 @@ private:
 };
 
 std::vector<uhid_event> frame_packet(CTAPPacket &packet);
-CTAPPacket execute_ctap_request(UHIDReport report, std::stop_token stop);
+CTAPPacket execute_ctap_request(
+    UHIDReport report,
+    std::stop_token stop,
+    CredentialStore& store
+);
 CTAPPacket make_hid_error(uint32_t cid, HIDError error);
 CTAPPacket make_cbor_error(uint32_t cid, CTAPError error);

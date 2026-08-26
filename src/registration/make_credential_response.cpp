@@ -22,9 +22,11 @@
 #include <iostream>
 #endif
 
-extern CredentialStore store;
-
-std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(UHIDReport &r, std::stop_token stop) {
+std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(
+    UHIDReport& r,
+    std::stop_token stop,
+    CredentialStore& store
+) {
     cancellation_point(stop);
     if(excludeList.size() > 0) {
         for(const auto &d : excludeList) {

@@ -29,6 +29,7 @@ add_executable(${PN}
     ${SOURCE_DIR}/credentials/credential.cpp
     # Cryptography operations
     ${SOURCE_DIR}/cryptography/crypto.cpp
+    ${SOURCE_DIR}/cryptography/store_security.cpp
     ${SOURCE_DIR}/cryptography/tpm.cpp
     # Authentication
     ${SOURCE_DIR}/authentication/authenticate.cpp
@@ -48,6 +49,7 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(TINYCBOR REQUIRED tinycbor)
 pkg_check_modules(OPENSSL REQUIRED openssl)
 pkg_check_modules(TSS2_ESYS REQUIRED tss2-esys)
+pkg_check_modules(TSS2_FAPI REQUIRED tss2-fapi)
 pkg_check_modules(TSS2_RC REQUIRED tss2-rc)
 pkg_check_modules(TSS2_MU REQUIRED tss2-mu)
 target_include_directories(${PN} PRIVATE ${SOURCE_DIR})
@@ -55,14 +57,15 @@ target_include_directories(${PN} PRIVATE
     ${TINYCBOR_INCLUDE_DIRS}
     ${OPENSSL_INCLUDE_DIRS}
     ${TSS2_ESYS_INCLUDE_DIRS}
+    ${TSS2_FAPI_INCLUDE_DIRS}
     ${TSS2_RC_INCLUDE_DIRS}
     ${TSS2_MU_INCLUDE_DIRS}
 )
-target_compile_options(${PN} PRIVATE -g)
 target_link_libraries(${PN} PRIVATE
     ${TINYCBOR_LIBRARIES}
     ${OPENSSL_LIBRARIES}
     ${TSS2_ESYS_LIBRARIES}
+    ${TSS2_FAPI_LIBRARIES}
     ${TSS2_RC_LIBRARIES}
     ${TSS2_MU_LIBRARIES}
     ctaphid_frame_processor
