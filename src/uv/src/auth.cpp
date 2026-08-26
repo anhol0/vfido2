@@ -1,8 +1,10 @@
 #include "cancellation.hpp"
+#include "auth.hpp"
 #include <cstdio>
 #include <iostream>
 #include <security/_pam_types.h>
 #include <security/pam_appl.h>
+#include <stdexcept>
 #include <sys/wait.h>
 #include <stdlib.h>
 #include <string>
@@ -46,10 +48,11 @@ static int myapp_conv(int num_msg, const struct pam_message **msg, struct pam_re
         switch (msg[i]->msg_style) {
             case PAM_PROMPT_ECHO_OFF: { // password/PIN prompt
                 // Surface this to your UI, get the PIN/password, e.g.:
-                // reply[i].resp = strdup(get_pin_from_ui());
-                fprintf(stderr, "[PAM] %s", msg[i]->msg);
+                fprintf(stderr, "[PAM] %s\n", msg[i]->msg);
+                setEchoMode(false);
                 get_data(data->password);
                 reply[i].resp = strdup(data->password.data() ? data->password.data() : "");
+                setEchoMode(true);
                 break;
             }
             case PAM_TEXT_INFO:
@@ -108,7 +111,7 @@ bool collect_consent(const std::string question) {
 std::string get_user_name() {
     char *name = getlogin();
     if(!name) {
-        return "dummy";
+        throw std::runtime_error("Unable to get current user name");
     }
     size_t len = strlen(name);
     return std::string(name, len);

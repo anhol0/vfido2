@@ -55,7 +55,7 @@ std::vector<std::vector<uint8_t>> CTAPPacket::stringify() {
         }
     }
 #ifdef DEBUG
-    if(cmd != CTAPHID_KEEPALIVE) {
+    if(cmd != (CTAPHID_KEEPALIVE | MASK)) {
         for(const auto &a : out) {
             // Adding initialization packet to the sequence
             printf("\x1b[1;32mOut data: \x1b[0m");
@@ -64,8 +64,6 @@ std::vector<std::vector<uint8_t>> CTAPPacket::stringify() {
             }
             printf("\n");
         }
-    } else {
-        std::cout << "\x1b[1;36mKeep-Alive...\x1b[0m\n";
     }
 #endif
     return out;
