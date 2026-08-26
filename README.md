@@ -6,9 +6,11 @@ Windows Hello for Linux-based systems.
 
 The credential database is stored at `/var/lib/vfido/credentials.v1`. Its
 AES-256-GCM key is generated and sealed by TPM2-TSS FAPI at
-`/HS/SRK/vfido-database-key`. A separately authorized TPM NV counter at
+`/HS/SRK/vfido-database-key` together with the TPM counter value observed at
+provisioning. A separately authorized TPM NV counter at
 `/nv/Owner/vfido-db-generation` detects replacement with an older, otherwise
-valid database.
+valid database. Recording the counter origin allows provisioning on TPMs whose
+new counters begin above one because of earlier counter use.
 
 Normal daemon startup never creates or replaces either TPM object. Provisioning
 is an explicit administrative operation:
@@ -26,19 +28,6 @@ sudo systemd-run --wait --pipe --property=Type=oneshot \
 Enter a non-empty authorization of at most 32 bytes when `systemd-creds`
 prompts. Keep its recovery material separately; losing the authorization or
 clearing the TPM makes the database unrecoverable.
-
-For an existing `/etc/vfido2/cred.bin`, stop the daemon and run `migrate` after
-provisioning:
-
-```sh
-sudo systemd-run --wait --pipe --property=Type=oneshot \
-  --property=LoadCredentialEncrypted=vfido-db-auth:/etc/credstore.encrypted/vfido-db-auth \
-  /usr/local/bin/vfido migrate
-```
-
-Migration authenticates and validates the legacy database, writes and reloads
-the new versioned database, and only then deletes the old raw-key NV index. The
-old encrypted file is retained so the operator can archive or remove it.
 
 [`config/vfido.service.example`](config/vfido.service.example) shows how to pass
 the encrypted credential to the daemon. The service identity must be able to

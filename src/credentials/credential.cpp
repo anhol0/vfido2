@@ -337,8 +337,7 @@ UniqueFd open_store_directory(const std::filesystem::path& directory) {
 }
 
 std::optional<std::vector<uint8_t>> read_store_file(
-    const std::filesystem::path& store_path,
-    bool legacy = false
+    const std::filesystem::path& store_path
 ) {
     const auto filename = store_path.filename();
     if(filename.empty() || filename == "." || filename == "..") {
@@ -371,23 +370,14 @@ std::optional<std::vector<uint8_t>> read_store_file(
     if(!S_ISDIR(directory_status.st_mode)) {
         throw std::runtime_error("Credential store parent is not a directory");
     }
-    if(
-        directory_status.st_uid != ::geteuid() &&
-        (!legacy || directory_status.st_uid != 0)
-    ) {
+    if(directory_status.st_uid != ::geteuid()) {
         throw std::runtime_error(
             "Credential store directory must be owned by the service user"
         );
     }
-    if(
-        legacy
-            ? (directory_status.st_mode & (S_IWGRP | S_IWOTH)) != 0
-            : (directory_status.st_mode & 0777) != 0700
-    ) {
+    if((directory_status.st_mode & 0777) != 0700) {
         throw std::runtime_error(
-            legacy
-                ? "Legacy credential store directory is writable by group or others"
-                : "Credential store directory permissions must be 0700"
+            "Credential store directory permissions must be 0700"
         );
     }
 
@@ -413,20 +403,14 @@ std::optional<std::vector<uint8_t>> read_store_file(
             "Credential store must be a regular file with one link"
         );
     }
-    if(status.st_uid != ::geteuid() && (!legacy || status.st_uid != 0)) {
+    if(status.st_uid != ::geteuid()) {
         throw std::runtime_error(
             "Credential store must be owned by the service user"
         );
     }
-    if(
-        legacy
-            ? (status.st_mode & (S_IRWXG | S_IRWXO)) != 0
-            : (status.st_mode & 0777) != 0600
-    ) {
+    if((status.st_mode & 0777) != 0600) {
         throw std::runtime_error(
-            legacy
-                ? "Legacy credential store is accessible by group or others"
-                : "Credential store permissions must be 0600"
+            "Credential store permissions must be 0600"
         );
     }
     if(
@@ -542,83 +526,6 @@ private:
     Container& value_;
 };
 
-std::vector<uint8_t> decrypt_legacy_store(
-    const std::vector<uint8_t>& ciphertext,
-    const std::vector<uint8_t>& key
-) {
-    if(key.size() != 32) {
-        throw std::invalid_argument("Legacy credential store key must be 32 bytes");
-    }
-    if(ciphertext.size() < NONCE_SIZE + TAG_SIZE) {
-        throw std::runtime_error("Legacy credential store is too short");
-    }
-
-    const uint8_t* nonce = ciphertext.data();
-    const uint8_t* tag = ciphertext.data() + NONCE_SIZE;
-    const uint8_t* encrypted = ciphertext.data() + NONCE_SIZE + TAG_SIZE;
-    const int encrypted_size = openssl_checked_size(
-        ciphertext.size() - NONCE_SIZE - TAG_SIZE,
-        "legacy credential ciphertext"
-    );
-
-    auto context = openssl_make_cipher_context();
-    openssl_check(
-        EVP_DecryptInit_ex(
-            context.get(), EVP_aes_256_gcm(), nullptr, nullptr, nullptr
-        ),
-        "legacy EVP_DecryptInit_ex"
-    );
-    openssl_check(
-        EVP_CIPHER_CTX_ctrl(
-            context.get(), EVP_CTRL_GCM_SET_IVLEN, NONCE_SIZE, nullptr
-        ),
-        "legacy EVP_CTRL_GCM_SET_IVLEN"
-    );
-    openssl_check(
-        EVP_DecryptInit_ex(
-            context.get(), nullptr, nullptr, key.data(), nonce
-        ),
-        "legacy EVP_DecryptInit_ex key and IV"
-    );
-    openssl_check(
-        EVP_CIPHER_CTX_ctrl(
-            context.get(),
-            EVP_CTRL_GCM_SET_TAG,
-            TAG_SIZE,
-            const_cast<uint8_t*>(tag)
-        ),
-        "legacy EVP_CTRL_GCM_SET_TAG"
-    );
-
-    std::vector<uint8_t> plaintext(
-        static_cast<std::size_t>(encrypted_size) + EVP_MAX_BLOCK_LENGTH
-    );
-    int output_size = 0;
-    openssl_check(
-        EVP_DecryptUpdate(
-            context.get(),
-            plaintext.data(),
-            &output_size,
-            encrypted,
-            encrypted_size
-        ),
-        "legacy EVP_DecryptUpdate"
-    );
-    int final_size = 0;
-    openssl_check(
-        EVP_DecryptFinal_ex(
-            context.get(),
-            plaintext.data() + output_size,
-            &final_size
-        ),
-        "legacy credential store authentication"
-    );
-    plaintext.resize(
-        static_cast<std::size_t>(output_size + final_size)
-    );
-    return plaintext;
-}
-
 } // namespace
 
 CredentialStore::CredentialStore(
@@ -637,47 +544,6 @@ CredentialStore::CredentialStore(
 
 CredentialStore::~CredentialStore() {
     OPENSSL_cleanse(storeKey_.data(), storeKey_.size());
-}
-
-void CredentialStore::migrate_legacy(
-    const std::filesystem::path& legacy_path,
-    const std::filesystem::path& new_path,
-    Key legacy_key,
-    Key new_key,
-    StoreGenerationCounter& generation_counter
-) {
-    CleanseBuffer cleanse_legacy_key(legacy_key);
-    if(generation_counter.read() != 0) {
-        throw std::runtime_error(
-            "Migration requires a newly provisioned rollback counter"
-        );
-    }
-    if(read_store_file(new_path)) {
-        throw std::runtime_error("Refusing to overwrite an existing new store");
-    }
-
-    const auto legacy_encrypted = read_store_file(legacy_path, true);
-    if(!legacy_encrypted) {
-        throw std::runtime_error("Legacy credential store does not exist");
-    }
-    auto plaintext = decrypt_legacy_store(*legacy_encrypted, legacy_key);
-    CleanseBuffer cleanse_plaintext(plaintext);
-
-    CredentialStore migrated(
-        new_path,
-        std::move(new_key),
-        &generation_counter
-    );
-    const auto json = nlohmann::json::parse(
-        plaintext.begin(),
-        plaintext.end()
-    );
-    const auto storage = migrated.parse_storage(json);
-    migrated.save_storage(storage);
-    migrated.load();
-    if(migrated.stored_.size() != storage.size()) {
-        throw std::runtime_error("Migrated credential store verification failed");
-    }
 }
 
 // Hex conversions

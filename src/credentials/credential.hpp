@@ -47,14 +47,6 @@ public:
     ~CredentialStore();
     void load();
 
-    static void migrate_legacy(
-        const std::filesystem::path& legacy_path,
-        const std::filesystem::path& new_path,
-        Key legacy_key,
-        Key new_key,
-        StoreGenerationCounter& generation_counter
-    );
-
     [[nodiscard]] bool has(const std::vector<uint8_t>& credId) const;
     void put(const StoredCredential& cred);
     [[nodiscard]] const StoredCredential& get_by_credId(

@@ -251,86 +251,6 @@ void write_encrypted_json(
     CHECK(::chmod(path.c_str(), 0600) == 0);
 }
 
-void write_legacy_encrypted_json(
-    const std::filesystem::path& path,
-    const std::vector<uint8_t>& key,
-    const nlohmann::json& value
-) {
-    const std::string serialized = value.dump();
-    const std::vector<uint8_t> plaintext(serialized.begin(), serialized.end());
-    const std::array<uint8_t, 12> nonce{};
-
-    auto context = openssl_make_cipher_context();
-    openssl_check(
-        EVP_EncryptInit_ex(
-            context.get(), EVP_aes_256_gcm(), nullptr, nullptr, nullptr
-        ),
-        "legacy test EVP_EncryptInit_ex"
-    );
-    openssl_check(
-        EVP_CIPHER_CTX_ctrl(
-            context.get(), EVP_CTRL_GCM_SET_IVLEN, nonce.size(), nullptr
-        ),
-        "legacy test EVP_CTRL_GCM_SET_IVLEN"
-    );
-    openssl_check(
-        EVP_EncryptInit_ex(
-            context.get(), nullptr, nullptr, key.data(), nonce.data()
-        ),
-        "legacy test EVP_EncryptInit_ex key and IV"
-    );
-
-    std::vector<uint8_t> ciphertext(
-        plaintext.size() + EVP_MAX_BLOCK_LENGTH
-    );
-    int ciphertext_size = 0;
-    openssl_check(
-        EVP_EncryptUpdate(
-            context.get(),
-            ciphertext.data(),
-            &ciphertext_size,
-            plaintext.data(),
-            openssl_checked_size(plaintext.size(), "legacy test plaintext")
-        ),
-        "legacy test EVP_EncryptUpdate"
-    );
-    int final_size = 0;
-    openssl_check(
-        EVP_EncryptFinal_ex(
-            context.get(),
-            ciphertext.data() + ciphertext_size,
-            &final_size
-        ),
-        "legacy test EVP_EncryptFinal_ex"
-    );
-
-    std::array<uint8_t, 16> tag{};
-    openssl_check(
-        EVP_CIPHER_CTX_ctrl(
-            context.get(), EVP_CTRL_GCM_GET_TAG, tag.size(), tag.data()
-        ),
-        "legacy test EVP_CTRL_GCM_GET_TAG"
-    );
-
-    std::ofstream file(path, std::ios::binary);
-    CHECK(static_cast<bool>(file));
-    file.write(
-        reinterpret_cast<const char*>(nonce.data()),
-        static_cast<std::streamsize>(nonce.size())
-    );
-    file.write(
-        reinterpret_cast<const char*>(tag.data()),
-        static_cast<std::streamsize>(tag.size())
-    );
-    file.write(
-        reinterpret_cast<const char*>(ciphertext.data()),
-        ciphertext_size + final_size
-    );
-    CHECK(static_cast<bool>(file));
-    file.close();
-    CHECK(::chmod(path.c_str(), 0600) == 0);
-}
-
 std::vector<uint8_t> read_file(const std::filesystem::path& path) {
     std::ifstream file(path, std::ios::binary);
     CHECK(static_cast<bool>(file));
@@ -720,67 +640,6 @@ void test_oversized_store_is_rejected_before_reading() {
     CHECK(rejected);
 }
 
-void test_legacy_store_migration() {
-    TemporaryStore temporary;
-    const auto legacy_path = temporary.directory() / "legacy.bin";
-    const auto new_path = temporary.directory() / "migrated.bin";
-    const std::vector<uint8_t> legacy_key(32, 0x63);
-    const std::vector<uint8_t> new_key(32, 0x64);
-    FakeGenerationCounter counter;
-
-    write_legacy_encrypted_json(
-        legacy_path,
-        legacy_key,
-        nlohmann::json::array({valid_storage_entry()})
-    );
-    CredentialStore::migrate_legacy(
-        legacy_path,
-        new_path,
-        legacy_key,
-        new_key,
-        counter
-    );
-
-    CHECK(counter.read() == 1);
-    CHECK(std::filesystem::exists(legacy_path));
-    CredentialStore reader(new_path, new_key, &counter);
-    reader.load();
-    CHECK(reader.get_all_creds().size() == 1);
-}
-
-void test_failed_legacy_migration_preserves_source() {
-    TemporaryStore temporary;
-    const auto legacy_path = temporary.directory() / "legacy.bin";
-    const auto new_path = temporary.directory() / "migrated.bin";
-    const std::vector<uint8_t> legacy_key(32, 0x65);
-    const std::vector<uint8_t> wrong_key(32, 0x66);
-    const std::vector<uint8_t> new_key(32, 0x67);
-    FakeGenerationCounter counter;
-
-    write_legacy_encrypted_json(
-        legacy_path,
-        legacy_key,
-        nlohmann::json::array({valid_storage_entry()})
-    );
-    bool rejected = false;
-    try {
-        CredentialStore::migrate_legacy(
-            legacy_path,
-            new_path,
-            wrong_key,
-            new_key,
-            counter
-        );
-    } catch(const std::runtime_error&) {
-        rejected = true;
-    }
-
-    CHECK(rejected);
-    CHECK(counter.read() == 0);
-    CHECK(std::filesystem::exists(legacy_path));
-    CHECK(!std::filesystem::exists(new_path));
-}
-
 void test_wrong_key_size_is_rejected() {
     TemporaryStore temporary;
     const std::vector<uint8_t> short_key(31, 0x00);
@@ -815,8 +674,6 @@ int main() {
         test_insecure_file_permissions_are_rejected();
         test_symlink_store_is_rejected();
         test_oversized_store_is_rejected_before_reading();
-        test_legacy_store_migration();
-        test_failed_legacy_migration_preserves_source();
         test_wrong_key_size_is_rejected();
     } catch(const std::exception& error) {
         std::cerr << error.what() << '\n';

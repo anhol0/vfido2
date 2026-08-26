@@ -7,9 +7,6 @@
 #include <stdexcept>
 #include <memory>
 
-static constexpr TPMI_RH_NV_INDEX STORE_KEY_NV_INDEX = 0x01500001;
-static constexpr uint16_t         STORE_KEY_SIZE      = 32;
-
 // Abstraction of TPM context
 struct TpmCtx {
     ESYS_CONTEXT *ctx = nullptr;
@@ -143,10 +140,6 @@ typedef struct CredentialKey {
 
 // Getting the persistent handle from the TPM SRK
 TpmLocalHandle get_primary(ESYS_CONTEXT *ctx);
-
-// One-time migration access to the legacy raw NV-stored database key.
-std::vector<uint8_t> read_legacy_store_key();
-void delete_legacy_store_key();
 
 // Creating ECC P256 keypair for selected credential
 CredentialKey create_credential_key(ESYS_CONTEXT *ctx, ESYS_TR primaryHandle);

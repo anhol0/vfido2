@@ -47,6 +47,19 @@ swtpm socket \
 tcti="swtpm:path=$server_socket"
 tpm2_startup -c -T "$tcti"
 TSS2_FAPICONF="$test_directory/fapi-config.json" tss2_provision
+
+# A new TPM counter is not required to begin at one. Exercise provisioning
+# after an earlier counter has advanced and been deleted.
+history_index=0x0180ffff
+tpm2_nvdefine "$history_index" \
+    -C o \
+    -s 8 \
+    -a "ownerread|ownerwrite|nt=counter" \
+    -T "$tcti"
+tpm2_nvincrement "$history_index" -C o -T "$tcti"
+tpm2_nvincrement "$history_index" -C o -T "$tcti"
+tpm2_nvundefine "$history_index" -C o -T "$tcti"
+
 TSS2_FAPICONF="$test_directory/fapi-config.json" \
     "$test_binary" setup \
     "$test_directory/credentials.v1" \

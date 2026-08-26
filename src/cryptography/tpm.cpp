@@ -17,44 +17,6 @@
 #include <tss2/tss2_mu.h>
 #include <vector>
 
-namespace {
-    std::vector<uint8_t> nv_read_key(ESYS_CONTEXT *ctx) {
-        ESYS_TR nvHandle = {};
-        TSS2_RC rc = Esys_TR_FromTPMPublic(
-                ctx, STORE_KEY_NV_INDEX,
-                ESYS_TR_NONE, ESYS_TR_NONE, ESYS_TR_NONE,
-                &nvHandle
-        );
-        if(rc != TSS2_RC_SUCCESS) {
-            throw std::runtime_error(
-                "Legacy database key NV index is unavailable: " +
-                std::string(Tss2_RC_Decode(rc))
-            );
-        }
-        TpmLocalHandle nvHandleGuard(ctx, nvHandle);
-
-        TPM2B_MAX_NV_BUFFER *nvDataRaw = nullptr;
-        rc = Esys_NV_Read(
-                ctx,
-                ESYS_TR_RH_OWNER,
-                nvHandleGuard.get(),
-                ESYS_TR_PASSWORD, ESYS_TR_NONE, ESYS_TR_NONE,
-                STORE_KEY_SIZE,
-                0,
-                &nvDataRaw
-        );
-        if(rc != TSS2_RC_SUCCESS) {
-            throw std::runtime_error("NV_Read failed: " + std::string(Tss2_RC_Decode(rc)));
-        }
-        EsysUniquePtr<TPM2B_MAX_NV_BUFFER> nvData(nvDataRaw);
-        if(nvData->size != STORE_KEY_SIZE) {
-            throw std::runtime_error("Legacy database key has an invalid size");
-        }
-        std::vector<uint8_t> key(nvData->buffer, nvData->buffer + nvData->size);
-        return key;
-    }
-}
-
 TpmLocalHandle get_primary(ESYS_CONTEXT *ctx) {
     ESYS_TR primaryHandle = ESYS_TR_NONE;
     TSS2_RC rc = Esys_TR_FromTPMPublic(
@@ -67,46 +29,6 @@ TpmLocalHandle get_primary(ESYS_CONTEXT *ctx) {
         throw std::runtime_error("Failed to load persistent SRK handle: " + std::string(Tss2_RC_Decode(rc)));
     }
     return TpmLocalHandle(ctx, primaryHandle);
-}
-
-std::vector<uint8_t> read_legacy_store_key() {
-    TpmCtx tpm;
-    return nv_read_key(tpm.ctx);
-}
-
-void delete_legacy_store_key() {
-    TpmCtx tpm;
-    ESYS_TR nv_handle = ESYS_TR_NONE;
-    TSS2_RC result = Esys_TR_FromTPMPublic(
-        tpm.ctx,
-        STORE_KEY_NV_INDEX,
-        ESYS_TR_NONE,
-        ESYS_TR_NONE,
-        ESYS_TR_NONE,
-        &nv_handle
-    );
-    if(result != TSS2_RC_SUCCESS) {
-        throw std::runtime_error(
-            "Could not locate legacy database key for deletion: " +
-            std::string(Tss2_RC_Decode(result))
-        );
-    }
-    TpmLocalHandle handle(tpm.ctx, nv_handle);
-
-    result = Esys_NV_UndefineSpace(
-        tpm.ctx,
-        ESYS_TR_RH_OWNER,
-        handle,
-        ESYS_TR_PASSWORD,
-        ESYS_TR_NONE,
-        ESYS_TR_NONE
-    );
-    if(result != TSS2_RC_SUCCESS) {
-        throw std::runtime_error(
-            "Could not delete legacy database key: " +
-            std::string(Tss2_RC_Decode(result))
-        );
-    }
 }
 
 CredentialKey create_credential_key(ESYS_CONTEXT *ctx, ESYS_TR primaryHandle) {

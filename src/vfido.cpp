@@ -16,14 +16,12 @@
 
 #include "credentials/credential.hpp"
 #include "cryptography/store_security.hpp"
-#include "cryptography/tpm.hpp"
 #include "device.hpp"
 #include "event.hpp"
 
 namespace {
 
 constexpr const char* STORE_PATH = "/var/lib/vfido/credentials.v1";
-constexpr const char* LEGACY_STORE_PATH = "/etc/vfido2/cred.bin";
 constexpr const char* CREDENTIAL_NAME = "vfido-db-auth";
 
 class UniqueFd {
@@ -70,7 +68,7 @@ struct Options {
 
 [[noreturn]] void usage_error(const std::string& message) {
     throw std::invalid_argument(
-        message + "\nUsage: vfido [run|provision|migrate] [--auth-file PATH]"
+        message + "\nUsage: vfido [run|provision] [--auth-file PATH]"
     );
 }
 
@@ -82,8 +80,7 @@ Options parse_options(int argc, char** argv) {
     }
     if(
         options.command != "run" &&
-        options.command != "provision" &&
-        options.command != "migrate"
+        options.command != "provision"
     ) {
         usage_error("Unknown command: " + options.command);
     }
@@ -216,20 +213,6 @@ int main(int argc, char** argv) {
         if(options.command == "provision") {
             security.provision();
             std::cout << "Database key and rollback counter provisioned\n";
-            return 0;
-        }
-
-        if(options.command == "migrate") {
-            CredentialStore::migrate_legacy(
-                LEGACY_STORE_PATH,
-                STORE_PATH,
-                read_legacy_store_key(),
-                security.unseal_key(),
-                security
-            );
-            delete_legacy_store_key();
-            std::cout << "Legacy credential store migrated; the old file was "
-                         "retained and its TPM key was deleted\n";
             return 0;
         }
 
