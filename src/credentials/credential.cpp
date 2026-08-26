@@ -290,30 +290,8 @@ std::filesystem::path prepare_store_directory(
         directory = ".";
     }
 
-    std::error_code error;
-    const bool created = std::filesystem::create_directories(directory, error);
-    if(error) {
-        throw std::filesystem::filesystem_error(
-            "create credential store directory",
-            directory,
-            error
-        );
-    }
-
-    if(created) {
-        std::filesystem::permissions(
-            directory,
-            std::filesystem::perms::owner_all,
-            std::filesystem::perm_options::replace,
-            error
-        );
-        if(error) {
-            throw std::filesystem::filesystem_error(
-                "set credential store directory permissions",
-                directory,
-                error
-            );
-        }
+    if(::mkdir(directory.c_str(), 0700) == -1 && errno != EEXIST) {
+        throw_system_error(errno, "create credential store directory");
     }
 
     return directory;

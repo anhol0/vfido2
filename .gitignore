@@ -1,4 +1,5 @@
 .cache
+.dev
 .planning
 *.cbor
 .vscode/

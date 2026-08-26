@@ -38,7 +38,7 @@ sudo systemd-run --wait --pipe --property=Type=oneshot \
 
 Migration authenticates and validates the legacy database, writes and reloads
 the new versioned database, and only then deletes the old raw-key NV index. The
-old encrypted file is retained for audit/recovery handling.
+old encrypted file is retained so the operator can archive or remove it.
 
 [`config/vfido.service.example`](config/vfido.service.example) shows how to pass
 the encrypted credential to the daemon. The service identity must be able to
