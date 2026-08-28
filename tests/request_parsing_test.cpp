@@ -282,6 +282,89 @@ namespace {
         CHECK(!request.parseRequest(payload));
     }
 
+    StoredCredential assertion_credential(uint8_t id_byte) {
+        return StoredCredential{
+            .id = std::vector<uint8_t>(16, id_byte),
+            .rpId = "example.com",
+            .userId = {id_byte},
+            .userName = "alice",
+            .userDisplayName = "Alice",
+            .alg = -7,
+            .signCount = 0,
+            .private_blob = {0x01},
+            .public_blob = {0x02}
+        };
+    }
+
+    void test_assertion_interaction_and_flags() {
+        CHECK(
+            assertion_interaction(false, false) ==
+            AssertionInteraction::None
+        );
+        CHECK(
+            assertion_interaction(true, false) ==
+            AssertionInteraction::Presence
+        );
+        CHECK(
+            assertion_interaction(false, true) ==
+            AssertionInteraction::Verification
+        );
+        CHECK(
+            assertion_interaction(true, true) ==
+            AssertionInteraction::Verification
+        );
+
+        CHECK(assertion_authenticator_flags(false, false) == 0x00);
+        CHECK(assertion_authenticator_flags(true, false) == 0x01);
+        CHECK(assertion_authenticator_flags(false, true) == 0x04);
+        CHECK(assertion_authenticator_flags(true, true) == 0x05);
+    }
+
+    void test_assertion_sequence_channel_timeout_and_exhaustion() {
+        constexpr uint32_t origin_cid = 0x01020304;
+        constexpr uint32_t foreign_cid = 0x05060708;
+        const auto start = AssertionSequence::Clock::time_point{};
+        AssertionSequence sequence;
+        sequence.begin(
+            origin_cid,
+            {assertion_credential(0x11), assertion_credential(0x22)},
+            start
+        );
+
+        CHECK(!sequence.next(foreign_cid, start).has_value());
+        CHECK(sequence.origin_cid() == origin_cid);
+
+        const auto first = sequence.next(
+            origin_cid,
+            start + std::chrono::seconds(30)
+        );
+        CHECK(first.has_value());
+        CHECK(first->id == std::vector<uint8_t>(16, 0x11));
+        CHECK(sequence.origin_cid() == origin_cid);
+
+        const auto second = sequence.next(
+            origin_cid,
+            start + std::chrono::seconds(60)
+        );
+        CHECK(second.has_value());
+        CHECK(second->id == std::vector<uint8_t>(16, 0x22));
+        CHECK(sequence.origin_cid() == 0);
+        CHECK(!sequence.next(origin_cid, start).has_value());
+
+        sequence.begin(
+            origin_cid,
+            {assertion_credential(0x33)},
+            start
+        );
+        CHECK(
+            !sequence.next(
+                origin_cid,
+                start + std::chrono::seconds(31)
+            ).has_value()
+        );
+        CHECK(sequence.origin_cid() == 0);
+    }
+
     void test_trailing_data_is_rejected() {
         auto payload = get_assertion_request();
         payload.push_back(0xF5);
@@ -306,6 +389,8 @@ int main() {
         {"GetAssertion rk option presence", test_get_assertion_tracks_rk_option_presence},
         {"GetAssertion wrong rk type", test_get_assertion_rejects_wrong_rk_option_type},
         {"GetAssertion empty credential ID", test_get_assertion_rejects_empty_credential_id},
+        {"GetAssertion interaction and flags", test_assertion_interaction_and_flags},
+        {"GetNextAssertion state", test_assertion_sequence_channel_timeout_and_exhaustion},
         {"trailing data", test_trailing_data_is_rejected}
     };
 
