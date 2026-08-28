@@ -34,6 +34,23 @@ add_test(
     COMMAND request_parsing_tests
 )
 
+add_executable(uv_process_tests
+    uv_process_test.cpp
+)
+
+target_include_directories(uv_process_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/src
+)
+
+target_link_libraries(uv_process_tests PRIVATE
+    uv_process
+)
+
+add_test(
+    NAME uv_process
+    COMMAND uv_process_tests
+)
+
 add_executable(crypto_tests
     crypto_test.cpp
     ${PROJECT_SOURCE_DIR}/src/cryptography/crypto.cpp
