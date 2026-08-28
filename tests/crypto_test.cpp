@@ -753,6 +753,69 @@ void test_failed_counter_commit_requires_reload_and_recovers() {
     CHECK(reader.has(make_credential().id));
 }
 
+void test_development_clear_commits_empty_store() {
+    TemporaryStore temporary;
+    const std::vector<uint8_t> key(32, 0x63);
+    FakeGenerationCounter counter;
+    const auto credential = make_credential();
+
+    CredentialStore store(temporary.path(), key, &counter);
+    store.put(credential);
+    CHECK(counter.read() == 1);
+    CHECK(store.has(credential.id));
+
+    store.clear();
+    CHECK(counter.read() == 2);
+    CHECK(!store.has(credential.id));
+
+    CredentialStore reader(temporary.path(), key, &counter);
+    reader.load();
+    CHECK(!reader.has(credential.id));
+}
+
+void test_development_clear_recovers_after_counter_failure() {
+    TemporaryStore temporary;
+    const std::vector<uint8_t> key(32, 0x64);
+    FakeGenerationCounter counter;
+    const auto credential = make_credential();
+
+    CredentialStore store(temporary.path(), key, &counter);
+    store.put(credential);
+    counter.failNextIncrement = true;
+
+    bool failed = false;
+    try {
+        store.clear();
+    } catch(const std::runtime_error&) {
+        failed = true;
+    }
+    CHECK(failed);
+    CHECK(counter.read() == 1);
+    CHECK(store.has(credential.id));
+
+    CredentialStore reader(temporary.path(), key, &counter);
+    reader.load();
+    CHECK(counter.read() == 2);
+    CHECK(!reader.has(credential.id));
+}
+
+void test_store_process_lock_rejects_concurrent_owner() {
+    TemporaryStore temporary;
+
+    {
+        CredentialStoreLock owner(temporary.path());
+        bool rejected = false;
+        try {
+            CredentialStoreLock contender(temporary.path());
+        } catch(const std::runtime_error&) {
+            rejected = true;
+        }
+        CHECK(rejected);
+    }
+
+    CredentialStoreLock next_owner(temporary.path());
+}
+
 void test_missing_store_with_nonzero_counter_is_rejected() {
     TemporaryStore temporary;
     const std::vector<uint8_t> key(32, 0x5F);
@@ -860,6 +923,9 @@ int main() {
         test_rollback_is_rejected();
         test_interrupted_commit_is_reconciled_after_authentication();
         test_failed_counter_commit_requires_reload_and_recovers();
+        test_development_clear_commits_empty_store();
+        test_development_clear_recovers_after_counter_failure();
+        test_store_process_lock_rejects_concurrent_owner();
         test_missing_store_with_nonzero_counter_is_rejected();
         test_insecure_file_permissions_are_rejected();
         test_symlink_store_is_rejected();
