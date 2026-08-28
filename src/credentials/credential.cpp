@@ -21,6 +21,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -279,6 +280,9 @@ void validate_credential(const StoredCredential& credential) {
         credential.public_blob.size() > MAX_CREDENTIAL_BLOB_SIZE
     ) {
         throw std::invalid_argument("Invalid public credential blob size");
+    }
+    if(credential.creationOrder == 0) {
+        throw std::invalid_argument("Credential creation order must be non-zero");
     }
 }
 
@@ -766,6 +770,8 @@ void CredentialStore::save_storage(const Storage& storage) {
         const auto& cred = item.second;
         j.push_back({
             {"id", toHex(cred.id)},
+            {"discoverable", cred.discoverable},
+            {"creationOrder", cred.creationOrder},
             {"rpId", cred.rpId},
             {"userId", toHex(cred.userId)},
             {"userName", cred.userName},
@@ -813,6 +819,21 @@ CredentialStore::Storage CredentialStore::parse_storage(
         StoredCredential cred;
         cred.id = fromHex(entry.at("id").get<std::string>());
         if(cred.id.size() < 16) throw std::runtime_error("Invalid Credential ID");
+
+        const auto& discoverable = entry.at("discoverable");
+        if(!discoverable.is_boolean()) {
+            throw std::runtime_error("Invalid discoverable credential type");
+        }
+        cred.discoverable = discoverable.get<bool>();
+
+        const auto& creation_order = entry.at("creationOrder");
+        if(!creation_order.is_number_unsigned()) {
+            throw std::runtime_error("Invalid credential creation order type");
+        }
+        cred.creationOrder = creation_order.get<uint64_t>();
+        if(cred.creationOrder == 0) {
+            throw std::runtime_error("Invalid credential creation order");
+        }
 
         cred.rpId = entry.at("rpId").get<std::string>();
         if(cred.rpId.empty()) throw std::runtime_error("Empty Relying Party ID");
@@ -908,14 +929,31 @@ bool CredentialStore::has(const std::vector<uint8_t> &credId) const {
 }
 
 void CredentialStore::put(const StoredCredential &cred) {
-    validate_credential(cred);
-    const auto credential_id = toHex(cred.id);
+    if(generation_ == std::numeric_limits<uint64_t>::max()) {
+        throw std::overflow_error("Credential store generation overflow");
+    }
+
+    auto stored_credential = cred;
+    stored_credential.creationOrder = generation_ + 1;
+    validate_credential(stored_credential);
+    const auto credential_id = toHex(stored_credential.id);
     if(stored_.contains(credential_id)) {
         throw std::invalid_argument("Credential ID already exists");
     }
 
     auto updated = stored_;
-    updated.emplace(credential_id, cred);
+    if(stored_credential.discoverable) {
+        std::erase_if(updated, [&](const auto& item) {
+            const auto& existing = item.second;
+            return existing.discoverable &&
+                existing.rpId == stored_credential.rpId &&
+                existing.userId == stored_credential.userId;
+        });
+    }
+    if(updated.size() >= MAX_CREDENTIALS) {
+        throw std::runtime_error("Credential store contains too many credentials");
+    }
+    updated.emplace(credential_id, std::move(stored_credential));
     save_storage(updated);
     stored_.swap(updated);
 }
@@ -925,9 +963,49 @@ const StoredCredential& CredentialStore::get_by_credId(const std::vector<uint8_t
     return stored_.at(toHex(credId));
 }
 
-CredentialStore::Storage CredentialStore::get_all_creds() const
-{
-    return stored_;
+std::vector<StoredCredential> CredentialStore::find_for_assertion(
+    std::string_view rp_id,
+    std::span<const PublicKeyCredentialDescriptor> allow_list
+) const {
+    std::vector<StoredCredential> matches;
+
+    if(!allow_list.empty()) {
+        std::unordered_set<std::string> seen;
+        matches.reserve(allow_list.size());
+        for(const auto& descriptor : allow_list) {
+            if(descriptor.type != "public-key") {
+                continue;
+            }
+
+            const auto credential_id = toHex(descriptor.id);
+            if(!seen.emplace(credential_id).second) {
+                continue;
+            }
+
+            const auto credential = stored_.find(credential_id);
+            if(
+                credential != stored_.end() &&
+                credential->second.rpId == rp_id
+            ) {
+                matches.push_back(credential->second);
+            }
+        }
+        return matches;
+    }
+
+    for(const auto& [credential_id, credential] : stored_) {
+        (void)credential_id;
+        if(credential.discoverable && credential.rpId == rp_id) {
+            matches.push_back(credential);
+        }
+    }
+    std::sort(matches.begin(), matches.end(), [](const auto& left, const auto& right) {
+        if(left.creationOrder != right.creationOrder) {
+            return left.creationOrder > right.creationOrder;
+        }
+        return left.id < right.id;
+    });
+    return matches;
 }
 
 void CredentialStore::incrementSigCount(const std::vector<uint8_t> &credId) {

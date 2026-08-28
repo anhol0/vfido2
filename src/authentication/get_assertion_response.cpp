@@ -21,25 +21,13 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(
 )
 {
     cancellation_point(stop);
-    // Getting number of credentials
-    uint32_t number_of_credentials = 0;
-    std::vector<StoredCredential> available_credentials = {};
-    if(allowList.size() != 0) {
-        for(auto &cred : allowList) {
-            if(store.has(cred.id) && store.get_by_credId(cred.id).rpId == rpId) {
-                number_of_credentials++;
-                available_credentials.push_back(store.get_by_credId(cred.id));
-            }
-        }
-    } else {
-        const auto all = store.get_all_creds();
-        for(auto& [id, cred] : all) {
-            if(cred.rpId == rpId) {
-                number_of_credentials++;
-                available_credentials.push_back(cred);
-            }
-        }
-    }
+    const auto available_credentials = store.find_for_assertion(
+        rpId,
+        allowList
+    );
+    const auto number_of_credentials = static_cast<uint32_t>(
+        available_credentials.size()
+    );
 
     // Caching the credentials that are available for authentication
     // They are used in authenticatorGetNextAssertion method
@@ -93,7 +81,9 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(
             cancellation_point(stop);
             return generate_single_credential_payload(
                 credential_for_authentication.value(),
-                number_of_credentials,
+                allowList.empty() && number_of_credentials > 1
+                    ? std::optional<uint32_t>(number_of_credentials)
+                    : std::nullopt,
                 stop,
                 store
             );
@@ -140,7 +130,7 @@ std::vector<uint8_t> CTAPGetAssertionRequest::generate_single_credential_payload
     std::vector<uint8_t> rphash = sha256(rpId);
     // Flags
     uint8_t flags = 0x00;
-    flags |= 0x01; // Explicitly assert User Presence (UP = 1)
+    flags |= options.at("up"); // Explicitly assert User Presence (UP = 1)
     // flags |= 0x01 << 2; // Explicitly assert User Verification (UV = 1)
     flags |= options.at("uv") << 2;
     const int sc = credential.signCount;

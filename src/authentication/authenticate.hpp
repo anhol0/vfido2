@@ -50,6 +50,9 @@ public:
     void set_origin_cid(uint32_t cid) {
         origin_cid = cid;
     }
+    [[nodiscard]] bool has_rk_option() const noexcept {
+        return rk_option_present;
+    }
     bool parseRequest(std::vector<uint8_t> &payload);
     std::vector<uint8_t> build_response(
         UHIDReport& r,
@@ -66,10 +69,10 @@ public:
         allowList.clear();
         extensions.clear();
         options = {
-            {"rk", false},
             {"uv", false},
             {"up", true}
         };
+        rk_option_present = false;
         pinAuth.clear();
         pinProtocol = 0;
         origin_cid = 0;
@@ -82,10 +85,10 @@ private:
     std::vector<PublicKeyCredentialDescriptor> allowList;
     std::unordered_map<std::string, ExtensionValue> extensions;
     std::unordered_map<std::string, bool> options = {
-        {"rk", false},
         {"uv", false},
         {"up", true}
     };
+    bool rk_option_present = false;
     std::vector<uint8_t> pinAuth;
     uint64_t pinProtocol = 0;
     void parse_rp_id(CborValue &map);

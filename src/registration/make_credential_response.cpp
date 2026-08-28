@@ -30,7 +30,11 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(
     cancellation_point(stop);
     if(excludeList.size() > 0) {
         for(const auto &d : excludeList) {
-            if(store.has(d.id)) {
+            if(
+                d.type == "public-key" &&
+                store.has(d.id) &&
+                store.get_by_credId(d.id).rpId == rp.id
+            ) {
                 return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_CREDENTIAL_EXCLUDED)};
             }
         }
@@ -100,8 +104,7 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(
 
     // Flags
     uint8_t flags = 0x00;
-    flags |= 0x01; // Explicitly assert User Presence (UP = 1)
-    // flags |= 0x01 << 2; // User verification (UV = 1)
+    flags |= options.at("up"); // Explicitly assert User Presence (UP = 1)
     flags |= options.at("uv") << 2;
     flags |= 1 << 6; // Attested Credential Data
     int sc = 0;
@@ -143,6 +146,7 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(
     credential.alg = selected_alg;
     credential.private_blob = key.privateBlob;
     credential.public_blob = key.publicBlob;
+    credential.discoverable = options.at("rk");
 
     // Doing scheiße
     auto extracted_coords = extractPublic(key.publicBlob);

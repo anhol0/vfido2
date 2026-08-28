@@ -201,6 +201,13 @@ CTAPPacket handle_cbor(
                 std::cerr << "There is a problem with the authenticatorGetAssertion request\n";
                 return make_cbor_error(request.cid, CTAPError::CTAP2_ERR_INVALID_CBOR);
             }
+            if(gar.has_rk_option()) {
+                gar.clear();
+                return make_cbor_error(
+                    request.cid,
+                    CTAPError::CTAP2_ERR_UNSUPPORTED_OPTION
+                );
+            }
             gar.set_origin_cid(request.cid);
 
             try {

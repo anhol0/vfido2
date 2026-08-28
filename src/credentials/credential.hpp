@@ -2,7 +2,9 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <span>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -25,6 +27,8 @@ struct StoredCredential {
     uint32_t signCount;
     std::vector<uint8_t> private_blob;
     std::vector<uint8_t> public_blob;
+    bool discoverable = false;
+    uint64_t creationOrder = 0;
 };
 
 class StoreGenerationCounter {
@@ -52,7 +56,10 @@ public:
     [[nodiscard]] const StoredCredential& get_by_credId(
         const std::vector<uint8_t>& credId
     ) const;
-    [[nodiscard]] Storage get_all_creds() const;
+    [[nodiscard]] std::vector<StoredCredential> find_for_assertion(
+        std::string_view rp_id,
+        std::span<const PublicKeyCredentialDescriptor> allow_list
+    ) const;
     void incrementSigCount(const std::vector<uint8_t>& credId);
     [[nodiscard]] std::string toHex(const std::vector<uint8_t>& v) const;
     [[nodiscard]] std::vector<uint8_t> fromHex(const std::string& s) const;

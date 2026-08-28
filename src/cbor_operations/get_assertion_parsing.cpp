@@ -154,10 +154,14 @@ void CTAPGetAssertionRequest::parse_options(CborValue& value) {
         );
         require_unique(seen, name, "option");
 
-        if(name == "up" || name == "uv")
+        if(name == "up" || name == "uv") {
             options[name] = cbor::read_bool(map);
-        else
+        } else if(name == "rk") {
+            (void)cbor::read_bool(map);
+            rk_option_present = true;
+        } else {
             cbor::skip(map);
+        }
     });
 }
 
