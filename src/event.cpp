@@ -105,7 +105,11 @@ namespace {
 
 }
 
-void run(FIDODevice& device, CredentialStore& store) {
+void run(
+    FIDODevice& device,
+    CredentialStore& store,
+    CredentialKeyProvider& key_provider
+) {
 #ifdef DEBUG
     // Showing
     #pragma clang diagnostic push
@@ -301,7 +305,8 @@ void run(FIDODevice& device, CredentialStore& store) {
                                 generation,
                                 &completion_mutex,
                                 &completion,
-                                &store
+                                &store,
+                                &key_provider
                             ]
                             (std::stop_token stop) mutable
                         {
@@ -313,7 +318,8 @@ void run(FIDODevice& device, CredentialStore& store) {
                                 result.packet = execute_ctap_request(
                                     std::move(request),
                                     stop,
-                                    store
+                                    store,
+                                    key_provider
                                 );
                             } catch (const OperationCancelled &e) {
                                 std::cout << "Exception: " <<  e.what() << std::endl;

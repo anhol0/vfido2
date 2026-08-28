@@ -3,6 +3,8 @@
 #include "uhid_report.hpp"
 #include "credentials/credential.hpp"
 #include "extensions.hpp"
+
+class CredentialKeyProvider;
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -61,7 +63,8 @@ class CTAPMakeCredentialRequest {
         std::vector<uint8_t> build_response(
             UHIDReport& r,
             std::stop_token stop,
-            CredentialStore& store
+            CredentialStore& store,
+            CredentialKeyProvider& key_provider
         );
     private:
         void parse_client_data_hash(CborValue &map); // Required

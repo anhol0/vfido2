@@ -6,10 +6,11 @@
 #include <cstring>
 #include <stop_token>
 #include <vector>
-#include <optional>
 
 #include "credentials/credential.hpp"
 #include "uhid_report.hpp"
+
+class CredentialKeyProvider;
 
 constexpr uint8_t MASK = 0x80;
 
@@ -41,5 +42,6 @@ void start_worker(UHIDReport &request);
 CTAPPacket handle_cbor(
     UHIDReport& request,
     std::stop_token stop,
-    CredentialStore& store
+    CredentialStore& store,
+    CredentialKeyProvider& key_provider
 );

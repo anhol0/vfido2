@@ -116,10 +116,11 @@ CTAPPacket make_hid_error(uint32_t cid, HIDError error)
 CTAPPacket execute_ctap_request(
     UHIDReport report,
     std::stop_token stop,
-    CredentialStore& store
+    CredentialStore& store,
+    CredentialKeyProvider& key_provider
 ) {
     cancellation_point(stop);
-    return handle_cbor(report, stop, store);
+    return handle_cbor(report, stop, store, key_provider);
 }
 
 std::vector<uhid_event> frame_packet(CTAPPacket &packet) {

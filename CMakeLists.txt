@@ -43,6 +43,7 @@ add_executable(${PN}
 
 target_compile_definitions(${PN} PRIVATE
     $<$<CONFIG:Debug>:DEBUG>
+    $<$<CONFIG:Debug>:VFIDO_DEVELOPMENT_BUILD>
 )
 
 find_package(PkgConfig REQUIRED)

@@ -241,6 +241,15 @@ std::vector<uint8_t> FapiStoreSecurity::unseal_key() {
     return key;
 }
 
+TSS2_TCTI_CONTEXT* FapiStoreSecurity::tcti() {
+    TSS2_TCTI_CONTEXT* result = nullptr;
+    fapi_check(Fapi_GetTcti(context_, &result), "Fapi_GetTcti");
+    if(result == nullptr) {
+        throw std::runtime_error("Fapi_GetTcti returned no TPM transport");
+    }
+    return result;
+}
+
 uint64_t FapiStoreSecurity::read_raw_counter() {
     uint8_t* data_raw = nullptr;
     std::size_t size = 0;

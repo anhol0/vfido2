@@ -38,6 +38,18 @@ public:
     virtual void increment() = 0;
 };
 
+class CredentialStoreLock {
+public:
+    explicit CredentialStoreLock(const std::filesystem::path& store_path);
+    ~CredentialStoreLock();
+
+    CredentialStoreLock(const CredentialStoreLock&) = delete;
+    CredentialStoreLock& operator=(const CredentialStoreLock&) = delete;
+
+private:
+    int directoryFd_ = -1;
+};
+
 class CredentialStore {
 public:
     using Key = std::vector<uint8_t>;
@@ -50,6 +62,9 @@ public:
     );
     ~CredentialStore();
     void load();
+#ifdef VFIDO_DEVELOPMENT_BUILD
+    void clear();
+#endif
 
     [[nodiscard]] bool has(const std::vector<uint8_t>& credId) const;
     void put(const StoredCredential& cred);

@@ -2,6 +2,9 @@
 
 Windows Hello for Linux-based systems.
 
+See [ROADMAP.md](ROADMAP.md) for the security and feature work remaining before
+using vFIDO2 with real credentials.
+
 ## Database security setup
 
 The credential database is stored at `/var/lib/vfido/credentials.v1`. Its
@@ -12,7 +15,18 @@ provisioning. A separately authorized TPM NV counter at
 valid database. Recording the counter origin allows provisioning on TPMs whose
 new counters begin above one because of earlier counter use.
 
-Normal daemon startup never creates or replaces either TPM object. Provisioning
+Credential signing keys are children of an authenticated deterministic primary
+that is recreated as a transient TPM object when the daemon starts. The parent
+uses no persistent handle, and each credential receives a non-empty
+authorization derived from the sealed database key and credential ID. Public
+and private TPM child blobs remain inside the encrypted credential database.
+Creating the transient primary uses the TPM owner hierarchy with its normal
+empty hierarchy authorization; if an administrator sets an owner hierarchy
+authorization, startup fails rather than bypassing it. The primary and its
+children use their own non-empty derived authorizations.
+
+Normal daemon startup never creates or replaces either persistent store-security
+object: the sealed key and rollback counter are provisioning-only. Provisioning
 is an explicit administrative operation:
 
 ```sh
@@ -29,6 +43,20 @@ Enter a non-empty authorization of at most 32 bytes when `systemd-creds`
 prompts. Keep its recovery material separately; losing the authorization or
 clearing the TPM makes the database unrecoverable.
 
+Debug builds provide a development-only command for removing every credential
+while preserving the sealed database key and rollback-counter objects:
+
+```sh
+sudo systemctl stop vfido
+sudo ./build/vfido clear-store --yes --auth-file .dev/vfido-db-auth
+```
+
+The command authenticates and loads the existing database, commits an encrypted
+empty collection atomically, and advances the rollback counter. It refuses to
+run while another current vFIDO process holds the store lock. An older database
+copy cannot be restored after the counter advances. Non-Debug builds do not
+advertise or accept `clear-store`.
+
 [`config/vfido.service.example`](config/vfido.service.example) shows how to pass
 the encrypted credential to the daemon. The service identity must be able to
 open `/dev/uhid`, the TPM resource-manager device, and the FAPI system keystore.
@@ -42,6 +70,9 @@ tested signed-policy and recovery procedure.
 This design protects database confidentiality, detects offline tampering and
 rollback, and requires authorization for TPM object use. It cannot protect
 secrets from a live root compromise that can inspect or inject into the daemon.
+Credential child blobs are bound to the source TPM and deterministic parent, so
+copying the database and its plaintext encryption key to a different TPM does
+not make the credentials portable.
 
 ## Build and test
 

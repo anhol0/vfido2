@@ -17,7 +17,8 @@
 std::vector<uint8_t> CTAPGetAssertionRequest::build_response(
     UHIDReport& r,
     std::stop_token stop,
-    CredentialStore& store
+    CredentialStore& store,
+    CredentialKeyProvider& key_provider
 )
 {
     cancellation_point(stop);
@@ -85,7 +86,8 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(
                     ? std::optional<uint32_t>(number_of_credentials)
                     : std::nullopt,
                 stop,
-                store
+                store,
+                key_provider
             );
         } else {
             return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_INVALID_CREDENTIAL)};
@@ -99,7 +101,8 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(
 
 std::vector<uint8_t> CTAPGetAssertionRequest::build_response_next(
     std::stop_token stop,
-    CredentialStore& store
+    CredentialStore& store,
+    CredentialKeyProvider& key_provider
 ) {
     auto cred_maybe = cache.get_next();
     if(!cred_maybe.has_value()) { return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_NOT_ALLOWED)}; }
@@ -109,7 +112,8 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response_next(
         cred,
         std::nullopt,
         stop,
-        store
+        store,
+        key_provider
     );
 }
 
@@ -117,7 +121,8 @@ std::vector<uint8_t> CTAPGetAssertionRequest::generate_single_credential_payload
     StoredCredential &credential,
     std::optional<uint32_t> number_of_credentials,
     std::stop_token stop,
-    CredentialStore& store
+    CredentialStore& store,
+    CredentialKeyProvider& key_provider
 ) {
     // incrementing signCont for selected credential
     credential.signCount++;
@@ -147,11 +152,8 @@ std::vector<uint8_t> CTAPGetAssertionRequest::generate_single_credential_payload
     std::vector<uint8_t> verificaton_data = authData;
     verificaton_data.insert(verificaton_data.end(), clientDataHash.begin(), clientDataHash.end());
     auto verification_data_hash = sha256(verificaton_data);
-    TpmCtx tpm;
-    TpmLocalHandle primary = get_primary(tpm.ctx);
-    auto signature = sign(
-        tpm.ctx,
-        primary,
+    auto signature = key_provider.sign(
+        credential.id,
         verification_data_hash,
         credential.public_blob,
         credential.private_blob

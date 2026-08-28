@@ -17,6 +17,7 @@
 #include <system_error>
 #include <nlohmann/json.hpp>
 #include <openssl/crypto.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -532,6 +533,33 @@ private:
 
 } // namespace
 
+CredentialStoreLock::CredentialStoreLock(
+    const std::filesystem::path& store_path
+) {
+    const auto directory_path = prepare_store_directory(store_path);
+    auto directory = open_store_directory(directory_path);
+
+    int result;
+    do {
+        result = ::flock(directory.get(), LOCK_EX | LOCK_NB);
+    } while(result == -1 && errno == EINTR);
+    if(result == -1) {
+        const int error = errno;
+        if(error == EWOULDBLOCK || error == EAGAIN) {
+            throw std::runtime_error("Credential store is already in use");
+        }
+        throw_system_error(error, "lock credential store directory");
+    }
+
+    directoryFd_ = directory.release();
+}
+
+CredentialStoreLock::~CredentialStoreLock() {
+    if(directoryFd_ >= 0) {
+        (void)::close(directoryFd_);
+    }
+}
+
 CredentialStore::CredentialStore(
     std::filesystem::path path,
     Key key,
@@ -921,6 +949,14 @@ void CredentialStore::load() {
     generation_ = decrypted.generation;
     requiresReload_ = false;
 }
+
+#ifdef VFIDO_DEVELOPMENT_BUILD
+void CredentialStore::clear() {
+    Storage empty;
+    save_storage(empty);
+    stored_.swap(empty);
+}
+#endif
 
 // Public API
 

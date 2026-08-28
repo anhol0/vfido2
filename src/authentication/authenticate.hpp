@@ -13,6 +13,8 @@
 #include "credentials/credential.hpp"
 #include "extensions.hpp"
 
+class CredentialKeyProvider;
+
 // Cache class
 class StoredCredentialsCache {
     private:
@@ -57,11 +59,13 @@ public:
     std::vector<uint8_t> build_response(
         UHIDReport& r,
         std::stop_token stop,
-        CredentialStore& store
+        CredentialStore& store,
+        CredentialKeyProvider& key_provider
     );
     std::vector<uint8_t> build_response_next(
         std::stop_token stop,
-        CredentialStore& store
+        CredentialStore& store,
+        CredentialKeyProvider& key_provider
     );
     void clear() {
         rpId.clear();
@@ -104,7 +108,8 @@ private:
         StoredCredential &credential,
         std::optional<uint32_t> number_of_credentials,
         std::stop_token stop,
-        CredentialStore& store
+        CredentialStore& store,
+        CredentialKeyProvider& key_provider
     );
     std::array<ParseFn, 8> dispatch_table = {
         nullptr,

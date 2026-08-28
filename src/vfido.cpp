@@ -9,6 +9,7 @@
 #include <string>
 #include <system_error>
 #include <string_view>
+#include <utility>
 
 #include <openssl/crypto.h>
 #include <sys/stat.h>
@@ -16,6 +17,7 @@
 
 #include "credentials/credential.hpp"
 #include "cryptography/store_security.hpp"
+#include "cryptography/tpm.hpp"
 #include "device.hpp"
 #include "event.hpp"
 
@@ -64,12 +66,20 @@ struct Authorization {
 struct Options {
     std::string command = "run";
     std::optional<std::filesystem::path> authorizationPath;
+#ifdef VFIDO_DEVELOPMENT_BUILD
+    bool confirmedClear = false;
+#endif
 };
 
 [[noreturn]] void usage_error(const std::string& message) {
-    throw std::invalid_argument(
-        message + "\nUsage: vfido [run|provision] [--auth-file PATH]"
-    );
+    std::string usage =
+        "\nUsage: vfido [run|provision] [--auth-file PATH]";
+#ifdef VFIDO_DEVELOPMENT_BUILD
+    usage +=
+        "\n       vfido clear-store --yes [--auth-file PATH]"
+        " (Debug builds only)";
+#endif
+    throw std::invalid_argument(message + usage);
 }
 
 Options parse_options(int argc, char** argv) {
@@ -81,20 +91,45 @@ Options parse_options(int argc, char** argv) {
     if(
         options.command != "run" &&
         options.command != "provision"
+#ifdef VFIDO_DEVELOPMENT_BUILD
+        && options.command != "clear-store"
+#endif
     ) {
         usage_error("Unknown command: " + options.command);
     }
 
     while(index < argc) {
         const std::string argument = argv[index++];
-        if(argument != "--auth-file" || index >= argc) {
-            usage_error("Unknown or incomplete option: " + argument);
+        if(argument == "--auth-file") {
+            if(index >= argc) {
+                usage_error("Incomplete option: --auth-file");
+            }
+            if(options.authorizationPath) {
+                usage_error("--auth-file may be specified only once");
+            }
+            options.authorizationPath = argv[index++];
+            continue;
         }
-        if(options.authorizationPath) {
-            usage_error("--auth-file may be specified only once");
+#ifdef VFIDO_DEVELOPMENT_BUILD
+        if(argument == "--yes") {
+            if(options.confirmedClear) {
+                usage_error("--yes may be specified only once");
+            }
+            options.confirmedClear = true;
+            continue;
         }
-        options.authorizationPath = argv[index++];
+#endif
+        usage_error("Unknown option: " + argument);
     }
+
+#ifdef VFIDO_DEVELOPMENT_BUILD
+    if(options.command == "clear-store" && !options.confirmedClear) {
+        usage_error("clear-store requires --yes confirmation");
+    }
+    if(options.command != "clear-store" && options.confirmedClear) {
+        usage_error("--yes is valid only with clear-store");
+    }
+#endif
     return options;
 }
 
@@ -216,9 +251,29 @@ int main(int argc, char** argv) {
             return 0;
         }
 
+        CredentialStoreLock store_lock(STORE_PATH);
+        auto database_key = security.unseal_key();
+#ifdef VFIDO_DEVELOPMENT_BUILD
+        if(options.command == "clear-store") {
+            CredentialStore store(
+                STORE_PATH,
+                std::move(database_key),
+                &security
+            );
+            store.load();
+            store.clear();
+            std::cout <<
+                "Credential store cleared; TPM security objects preserved\n";
+            return 0;
+        }
+#endif
+        CredentialKeyProvider key_provider(
+            security.tcti(),
+            database_key
+        );
         CredentialStore store(
             STORE_PATH,
-            security.unseal_key(),
+            std::move(database_key),
             &security
         );
         store.load();
@@ -226,7 +281,7 @@ int main(int argc, char** argv) {
         FIDODevice device;
         device.init();
         std::cout << "UHID device created\n";
-        run(device, store);
+        run(device, store, key_provider);
         return 0;
     } catch(const std::exception& error) {
         std::cerr << "vfido: " << error.what() << '\n';

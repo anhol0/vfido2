@@ -134,7 +134,8 @@ CTAPPacket handle_ping(UHIDReport &request) {
 CTAPPacket handle_cbor(
     UHIDReport& request,
     std::stop_token stop,
-    CredentialStore& store
+    CredentialStore& store,
+    CredentialKeyProvider& key_provider
 ) {
     CTAPPacket packet;
     const uint8_t command = request.payload[0];
@@ -163,7 +164,9 @@ CTAPPacket handle_cbor(
 
         // Building the response
         try {
-            payload = mcr.build_response(request, stop, store);
+            payload = mcr.build_response(
+                request, stop, store, key_provider
+            );
         } catch (const OperationCancelled&) {
             throw;
         } catch(std::exception &e) {
@@ -211,7 +214,9 @@ CTAPPacket handle_cbor(
             gar.set_origin_cid(request.cid);
 
             try {
-                payload = gar.build_response(request, stop, store);
+                payload = gar.build_response(
+                    request, stop, store, key_provider
+                );
             } catch (const OperationCancelled &e) {
                 gar.clear();
                 throw;
@@ -231,7 +236,9 @@ CTAPPacket handle_cbor(
             }
 
             try {
-                payload = gar.build_response_next(stop, store);
+                payload = gar.build_response_next(
+                    stop, store, key_provider
+                );
             } catch (const OperationCancelled&) {
                 throw;
             } catch (const std::exception &e) {

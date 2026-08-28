@@ -20,6 +20,7 @@ public:
 
     void provision();
     [[nodiscard]] std::vector<uint8_t> unseal_key();
+    [[nodiscard]] TSS2_TCTI_CONTEXT* tcti();
     [[nodiscard]] uint64_t read() override;
     void increment() override;
 

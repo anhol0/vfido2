@@ -2,150 +2,125 @@
 
 #include <array>
 #include <cstdint>
-#include <vector>
-#include <tss2/tss2_esys.h>
-#include <stdexcept>
 #include <memory>
+#include <span>
+#include <vector>
 
-// Abstraction of TPM context
+#include <tss2/tss2_esys.h>
+
 struct TpmCtx {
-    ESYS_CONTEXT *ctx = nullptr;
-    TpmCtx() {
-        TSS2_RC rc = Esys_Initialize(&ctx, nullptr, nullptr);
-        if(rc != TSS2_RC_SUCCESS) {
-            throw std::runtime_error("Esys initialize error");
-        }
+    explicit TpmCtx(TSS2_TCTI_CONTEXT* tcti = nullptr);
+    ~TpmCtx();
+
+    TpmCtx(const TpmCtx&) = delete;
+    TpmCtx& operator=(const TpmCtx&) = delete;
+
+    ESYS_CONTEXT* ctx = nullptr;
+};
+
+class TpmTransientHandle {
+public:
+    explicit TpmTransientHandle(
+        ESYS_CONTEXT* context,
+        ESYS_TR handle = ESYS_TR_NONE
+    ) noexcept : context_(context), handle_(handle) {}
+
+    ~TpmTransientHandle() {
+        reset();
     }
-    ~TpmCtx() { if(ctx) Esys_Finalize(&ctx); }
-};
 
-// Class for Transistent TPM handles got with Esys_Load, Esys_CreateLoaded etc.
-class TpmTransistentHandle {
-    public:
-        TpmTransistentHandle(ESYS_CONTEXT *ctx, ESYS_TR handle = ESYS_TR_NONE)
-            : ctx_(ctx), handle_(handle) {}
-        ~TpmTransistentHandle() {
+    TpmTransientHandle(const TpmTransientHandle&) = delete;
+    TpmTransientHandle& operator=(const TpmTransientHandle&) = delete;
+
+    TpmTransientHandle(TpmTransientHandle&& other) noexcept
+        : context_(other.context_), handle_(other.release()) {}
+
+    TpmTransientHandle& operator=(TpmTransientHandle&& other) noexcept {
+        if(this != &other) {
             reset();
+            context_ = other.context_;
+            handle_ = other.release();
         }
+        return *this;
+    }
 
-        // Disable copying
-        TpmTransistentHandle(const TpmTransistentHandle&) = delete;
-        TpmTransistentHandle& operator=(const TpmTransistentHandle&) = delete;
+    [[nodiscard]] ESYS_TR get() const noexcept {
+        return handle_;
+    }
 
-        // Enable moving
-        TpmTransistentHandle(TpmTransistentHandle&& other) noexcept
-            : ctx_(other.ctx_), handle_(other.handle_) {
-                other.handle_ = ESYS_TR_NONE;
+    [[nodiscard]] ESYS_TR* ptr() noexcept {
+        return &handle_;
+    }
+
+    void reset(ESYS_TR new_handle = ESYS_TR_NONE) noexcept {
+        if(context_ != nullptr && handle_ != ESYS_TR_NONE) {
+            (void)Esys_FlushContext(context_, handle_);
         }
-        TpmTransistentHandle& operator=(TpmTransistentHandle&& other) noexcept
-        {
-            if(this != &other) {
-                reset();
-                ctx_ = other.ctx_;
-                handle_ = other.handle_;
-                other.handle_ = ESYS_TR_NONE;
-            }
-            return *this;
-        }
+        handle_ = new_handle;
+    }
 
-        ESYS_TR get() const { return handle_; }
-        ESYS_TR* ptr() { return &handle_; }
-        operator ESYS_TR() const { return handle_; }
+    [[nodiscard]] ESYS_TR release() noexcept {
+        const ESYS_TR handle = handle_;
+        handle_ = ESYS_TR_NONE;
+        return handle;
+    }
 
-        // Flushing the handle or replacing it with a new one
-        // Freeing memory of the TPM
-        void reset(ESYS_TR new_handle = ESYS_TR_NONE) {
-            if(ctx_ && handle_ != ESYS_TR_NONE) {
-                Esys_FlushContext(ctx_, handle_);
-            }
-            handle_ = new_handle;
-        }
-
-        // Releasing the handle completely
-        ESYS_TR release() {
-            ESYS_TR temp = handle_;
-            handle_ = ESYS_TR_NONE;
-            return temp;
-        }
-
-    private:
-    ESYS_CONTEXT *ctx_;
+private:
+    ESYS_CONTEXT* context_;
     ESYS_TR handle_;
 };
 
-// Class for Local handles that occupy RAM instead of the TPM memory
-// Should be closed with Esys_TR_Close function
-class TpmLocalHandle {
-    public:
-        TpmLocalHandle(ESYS_CONTEXT *ctx, ESYS_TR handle = ESYS_TR_NONE)
-            : ctx_(ctx), handle_(handle) {}
-        ~TpmLocalHandle() {
-            reset();
-        }
-
-        // Disable copying
-        TpmLocalHandle(const TpmLocalHandle&) = delete;
-        TpmLocalHandle& operator=(const TpmLocalHandle&) = delete;
-
-        // Enable moving
-        TpmLocalHandle(TpmLocalHandle&& other) noexcept
-            : ctx_(other.ctx_), handle_(other.handle_) {
-                other.handle_ = ESYS_TR_NONE;
-        }
-        TpmLocalHandle& operator=(TpmLocalHandle&& other) noexcept
-        {
-            if(this != &other) {
-                reset();
-                ctx_ = other.ctx_;
-                handle_ = other.handle_;
-                other.handle_ = ESYS_TR_NONE;
-            }
-            return *this;
-        }
-
-        ESYS_TR get() const { return handle_; }
-        ESYS_TR* ptr() { return &handle_; }
-        operator ESYS_TR() const { return handle_; }
-
-        // Flushing the handle or replacing it with a new one
-        // Freeing memory of the TPM
-        void reset(ESYS_TR new_handle = ESYS_TR_NONE) {
-            if(ctx_ && handle_ != ESYS_TR_NONE) {
-                Esys_TR_Close(ctx_, &handle_);
-            }
-            handle_ = new_handle;
-        }
-
-    private:
-    ESYS_CONTEXT *ctx_;
-    ESYS_TR handle_;
-};
-
-// Smart TPM Pointer Freeing
 struct EsysDeleter {
-    void operator()(void* ptr) const {
-        if(ptr) {
-            Esys_Free(ptr);
-        }
+    void operator()(void* pointer) const noexcept {
+        Esys_Free(pointer);
     }
 };
-template <typename T>
+
+template<typename T>
 using EsysUniquePtr = std::unique_ptr<T, EsysDeleter>;
 
-// Key storage entity
-typedef struct CredentialKey {
+struct CredentialKey {
     std::vector<uint8_t> publicBlob;
     std::vector<uint8_t> privateBlob;
-} CredentialKey;
+};
 
-// Getting the persistent handle from the TPM SRK
-TpmLocalHandle get_primary(ESYS_CONTEXT *ctx);
+class CredentialKeyProvider {
+public:
+    CredentialKeyProvider(
+        TSS2_TCTI_CONTEXT* tcti,
+        std::span<const uint8_t> master_key
+    );
+    ~CredentialKeyProvider();
 
-// Creating ECC P256 keypair for selected credential
-CredentialKey create_credential_key(ESYS_CONTEXT *ctx, ESYS_TR primaryHandle);
+    CredentialKeyProvider(const CredentialKeyProvider&) = delete;
+    CredentialKeyProvider& operator=(const CredentialKeyProvider&) = delete;
 
-// Extracting public key from the blob stored in encrypted JSON file
-std::array<std::vector<uint8_t>, 2> extractPublic(std::vector<uint8_t> &pubBlob);
+    [[nodiscard]] CredentialKey create(
+        std::span<const uint8_t> credential_id
+    );
+    [[nodiscard]] std::vector<uint8_t> sign(
+        std::span<const uint8_t> credential_id,
+        std::span<const uint8_t> digest,
+        std::span<const uint8_t> public_blob,
+        std::span<const uint8_t> private_blob
+    );
 
-// Signature of the credential for authenticatorGetAssertion method
-std::vector<uint8_t> sign(ESYS_CONTEXT *ctx, ESYS_TR primaryHandle, std::vector<uint8_t> &data, std::vector<uint8_t> &publicBlob, std::vector<uint8_t> &privateBlob);
+private:
+    struct Secret {
+        ~Secret();
+        std::array<uint8_t, 32> bytes{};
+    };
+
+    [[nodiscard]] std::array<uint8_t, 32> credential_authorization(
+        std::span<const uint8_t> credential_id
+    ) const;
+
+    TpmCtx tpm_;
+    TpmTransientHandle parent_;
+    Secret parentAuthorization_;
+    Secret credentialAuthorizationMaster_;
+};
+
+[[nodiscard]] std::array<std::vector<uint8_t>, 2> extractPublic(
+    std::span<const uint8_t> public_blob
+);

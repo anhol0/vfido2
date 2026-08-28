@@ -25,7 +25,8 @@
 std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(
     UHIDReport& r,
     std::stop_token stop,
-    CredentialStore& store
+    CredentialStore& store,
+    CredentialKeyProvider& key_provider
 ) {
     cancellation_point(stop);
     if(excludeList.size() > 0) {
@@ -132,10 +133,8 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(
     authData.insert(authData.end(), credId.begin(), credId.end());
 
     // Generating the keypair and storing the credential
-    TpmCtx tpm;
-    TpmLocalHandle primary = get_primary(tpm.ctx);
     cancellation_point(stop);
-    CredentialKey key = create_credential_key(tpm.ctx, primary);
+    CredentialKey key = key_provider.create(credId);
     StoredCredential credential;
     credential.id = credId;
     credential.rpId = rp.id;
