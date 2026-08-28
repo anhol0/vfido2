@@ -136,17 +136,23 @@ void test_sha256() {
     CHECK(std::equal(digest.begin(), digest.end(), expected.begin()));
 }
 
-StoredCredential make_credential() {
+StoredCredential make_credential(
+    uint8_t id_byte = 0x42,
+    std::string rp_id = "example.com",
+    std::vector<uint8_t> user_id = {0x10, 0x11},
+    bool discoverable = true
+) {
     return StoredCredential{
-        .id = std::vector<uint8_t>(16, 0x42),
-        .rpId = "example.com",
-        .userId = {0x10, 0x11},
+        .id = std::vector<uint8_t>(16, id_byte),
+        .rpId = std::move(rp_id),
+        .userId = std::move(user_id),
         .userName = "alice",
         .userDisplayName = "Alice",
         .alg = -7,
         .signCount = 4,
         .private_blob = {0x20, 0x21},
-        .public_blob = {0x30, 0x31}
+        .public_blob = {0x30, 0x31},
+        .discoverable = discoverable
     };
 }
 
@@ -278,6 +284,8 @@ void write_file(
 nlohmann::json valid_storage_entry() {
     return {
         {"id", std::string(32, 'A')},
+        {"discoverable", true},
+        {"creationOrder", 1U},
         {"rpId", "example.com"},
         {"userId", "1011"},
         {"userName", "alice"},
@@ -354,6 +362,183 @@ void test_credential_store_round_trip() {
     CHECK(loaded.signCount == credential.signCount);
     CHECK(loaded.private_blob == credential.private_blob);
     CHECK(loaded.public_blob == credential.public_blob);
+    CHECK(loaded.discoverable == credential.discoverable);
+    CHECK(loaded.creationOrder == 1);
+
+    const auto encrypted = read_file(temporary.path());
+    CHECK(encrypted.size() > 8);
+    CHECK(encrypted[8] == 1);
+}
+
+void test_discoverability_schema_is_required() {
+    TemporaryStore temporary;
+    const std::vector<uint8_t> key(32, 0xB0);
+
+    const auto expect_rejected = [&](nlohmann::json entry) {
+        write_encrypted_json(
+            temporary.path(), key, nlohmann::json::array({std::move(entry)})
+        );
+        CredentialStore reader(temporary.path(), key);
+        bool rejected = false;
+        try {
+            reader.load();
+        } catch(const std::exception&) {
+            rejected = true;
+        }
+        CHECK(rejected);
+    };
+
+    auto missing_discoverable = valid_storage_entry();
+    missing_discoverable.erase("discoverable");
+    expect_rejected(std::move(missing_discoverable));
+
+    auto wrong_discoverable = valid_storage_entry();
+    wrong_discoverable["discoverable"] = 1;
+    expect_rejected(std::move(wrong_discoverable));
+
+    auto missing_order = valid_storage_entry();
+    missing_order.erase("creationOrder");
+    expect_rejected(std::move(missing_order));
+
+    auto wrong_order = valid_storage_entry();
+    wrong_order["creationOrder"] = "first";
+    expect_rejected(std::move(wrong_order));
+
+    auto zero_order = valid_storage_entry();
+    zero_order["creationOrder"] = 0U;
+    expect_rejected(std::move(zero_order));
+}
+
+void test_discoverable_credential_replaces_same_rp_account() {
+    TemporaryStore temporary;
+    const std::vector<uint8_t> key(32, 0xB1);
+    const std::vector<uint8_t> user_id{0x10, 0x11};
+    const auto old_credential = make_credential(
+        0x41, "example.com", user_id, true
+    );
+    const auto non_discoverable = make_credential(
+        0x42, "example.com", user_id, false
+    );
+    const auto other_rp = make_credential(
+        0x43, "other.example", user_id, true
+    );
+    const auto replacement = make_credential(
+        0x44, "example.com", user_id, true
+    );
+
+    CredentialStore writer(temporary.path(), key);
+    writer.put(old_credential);
+    writer.put(non_discoverable);
+    writer.put(other_rp);
+    writer.put(replacement);
+
+    CHECK(!writer.has(old_credential.id));
+    CHECK(writer.has(non_discoverable.id));
+    CHECK(writer.has(other_rp.id));
+    CHECK(writer.has(replacement.id));
+    CHECK(writer.get_by_credId(replacement.id).creationOrder == 4);
+
+    CredentialStore reader(temporary.path(), key);
+    reader.load();
+    CHECK(!reader.has(old_credential.id));
+    CHECK(reader.has(non_discoverable.id));
+    CHECK(reader.has(other_rp.id));
+    CHECK(reader.has(replacement.id));
+}
+
+void test_non_discoverable_credentials_do_not_replace_each_other() {
+    TemporaryStore temporary;
+    const std::vector<uint8_t> key(32, 0xB2);
+    const std::vector<uint8_t> user_id{0x20};
+    const auto first = make_credential(
+        0x51, "example.com", user_id, false
+    );
+    const auto second = make_credential(
+        0x52, "example.com", user_id, false
+    );
+
+    CredentialStore store(temporary.path(), key);
+    store.put(first);
+    store.put(second);
+
+    CHECK(store.has(first.id));
+    CHECK(store.has(second.id));
+}
+
+void test_assertion_selection_respects_discoverability_and_rp() {
+    TemporaryStore temporary;
+    const std::vector<uint8_t> key(32, 0xB3);
+    const auto older_discoverable = make_credential(
+        0x61, "example.com", {0x01}, true
+    );
+    const auto non_discoverable = make_credential(
+        0x62, "example.com", {0x02}, false
+    );
+    const auto newer_discoverable = make_credential(
+        0x63, "example.com", {0x03}, true
+    );
+    const auto other_rp = make_credential(
+        0x64, "other.example", {0x04}, true
+    );
+
+    CredentialStore store(temporary.path(), key);
+    store.put(older_discoverable);
+    store.put(non_discoverable);
+    store.put(newer_discoverable);
+    store.put(other_rp);
+
+    const std::vector<PublicKeyCredentialDescriptor> no_allow_list;
+    const auto discovered = store.find_for_assertion(
+        "example.com", no_allow_list
+    );
+    CHECK(discovered.size() == 2);
+    CHECK(discovered[0].id == newer_discoverable.id);
+    CHECK(discovered[1].id == older_discoverable.id);
+
+    const std::vector<PublicKeyCredentialDescriptor> allow_list{
+        {.type = "public-key", .id = non_discoverable.id},
+        {.type = "public-key", .id = other_rp.id},
+        {.type = "public-key", .id = non_discoverable.id},
+        {.type = "wrong-type", .id = older_discoverable.id},
+        {.type = "public-key", .id = newer_discoverable.id}
+    };
+    const auto allowed = store.find_for_assertion("example.com", allow_list);
+    CHECK(allowed.size() == 2);
+    CHECK(allowed[0].id == non_discoverable.id);
+    CHECK(allowed[1].id == newer_discoverable.id);
+}
+
+void test_failed_discoverable_replacement_preserves_old_credential() {
+    TemporaryStore temporary;
+    const std::vector<uint8_t> key(32, 0xB4);
+    const std::vector<uint8_t> user_id{0x30};
+    const auto old_credential = make_credential(
+        0x71, "example.com", user_id, true
+    );
+    const auto replacement = make_credential(
+        0x72, "example.com", user_id, true
+    );
+
+    CredentialStore writer(temporary.path(), key);
+    writer.put(old_credential);
+    CHECK(::chmod(temporary.directory().c_str(), 0500) == 0);
+
+    bool rejected = false;
+    try {
+        writer.put(replacement);
+    } catch(const std::exception&) {
+        rejected = true;
+    }
+    CHECK(::chmod(temporary.directory().c_str(), 0700) == 0);
+
+    CHECK(rejected);
+    CHECK(writer.has(old_credential.id));
+    CHECK(!writer.has(replacement.id));
+
+    CredentialStore reader(temporary.path(), key);
+    reader.load();
+    CHECK(reader.has(old_credential.id));
+    CHECK(!reader.has(replacement.id));
 }
 
 void test_repeated_save_replaces_database_durably() {
@@ -660,6 +845,11 @@ int main() {
         test_sha256();
         test_hex_decoder_rejects_malformed_input();
         test_credential_store_round_trip();
+        test_discoverability_schema_is_required();
+        test_discoverable_credential_replaces_same_rp_account();
+        test_non_discoverable_credentials_do_not_replace_each_other();
+        test_assertion_selection_respects_discoverability_and_rp();
+        test_failed_discoverable_replacement_preserves_old_credential();
         test_repeated_save_replaces_database_durably();
         test_failed_replacement_rolls_back_and_removes_temporary_file();
         test_signature_counter_overflow_is_rejected();

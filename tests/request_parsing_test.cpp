@@ -143,6 +143,19 @@ namespace {
         CHECK(request.publicKeyCredParams.size() == 1);
         CHECK(request.publicKeyCredParams.front().type == "public-key");
         CHECK(request.publicKeyCredParams.front().alg == -7);
+        CHECK(!request.options.at("rk"));
+    }
+
+    void test_make_credential_parses_rk_option() {
+        auto payload = make_credential_request(32, true, 5);
+        append_unsigned(payload, 7);
+        append_map(payload, 1);
+        append_text(payload, "rk");
+        payload.push_back(0xF5); // true
+
+        CTAPMakeCredentialRequest request;
+        CHECK(request.parseRequest(payload));
+        CHECK(request.options.at("rk"));
     }
 
     void test_make_credential_rejects_bad_hash() {
@@ -228,6 +241,37 @@ namespace {
         CHECK(!request.parseRequest(payload));
     }
 
+    void test_get_assertion_tracks_rk_option_presence() {
+        for(const uint8_t value : {uint8_t{0xF4}, uint8_t{0xF5}}) {
+            auto payload = get_assertion_request(32, 3);
+            append_unsigned(payload, 5);
+            append_map(payload, 1);
+            append_text(payload, "rk");
+            payload.push_back(value);
+
+            CTAPGetAssertionRequest request;
+            CHECK(request.parseRequest(payload));
+            CHECK(request.has_rk_option());
+        }
+
+        auto payload = get_assertion_request();
+        CTAPGetAssertionRequest request;
+        CHECK(request.parseRequest(payload));
+        CHECK(!request.has_rk_option());
+    }
+
+    void test_get_assertion_rejects_wrong_rk_option_type() {
+        auto payload = get_assertion_request(32, 3);
+        append_unsigned(payload, 5);
+        append_map(payload, 1);
+        append_text(payload, "rk");
+        append_unsigned(payload, 1);
+
+        CTAPGetAssertionRequest request;
+        CHECK(!request.parseRequest(payload));
+        CHECK(!request.has_rk_option());
+    }
+
     void test_get_assertion_rejects_empty_credential_id() {
         auto payload = get_assertion_request(32, 3);
         append_unsigned(payload, 3);
@@ -252,12 +296,15 @@ namespace {
 int main() {
     const std::vector<Test> tests{
         {"valid MakeCredential", test_valid_make_credential},
+        {"MakeCredential rk option", test_make_credential_parses_rk_option},
         {"MakeCredential bad hash", test_make_credential_rejects_bad_hash},
         {"MakeCredential missing nested field", test_make_credential_rejects_missing_nested_field},
         {"duplicate top-level parameter", test_duplicate_top_level_parameter_is_rejected},
         {"unknown parameter", test_unknown_parameter_is_consumed},
         {"valid GetAssertion", test_valid_get_assertion_with_optional_fields},
         {"GetAssertion wrong option type", test_get_assertion_rejects_wrong_option_type},
+        {"GetAssertion rk option presence", test_get_assertion_tracks_rk_option_presence},
+        {"GetAssertion wrong rk type", test_get_assertion_rejects_wrong_rk_option_type},
         {"GetAssertion empty credential ID", test_get_assertion_rejects_empty_credential_id},
         {"trailing data", test_trailing_data_is_rejected}
     };
