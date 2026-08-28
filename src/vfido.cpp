@@ -20,6 +20,7 @@
 #include "cryptography/tpm.hpp"
 #include "device.hpp"
 #include "event.hpp"
+#include "uv/src/auth_handler.hpp"
 
 namespace {
 
@@ -239,6 +240,13 @@ void read_authorization(
 } // namespace
 
 int main(int argc, char** argv) {
+    if(
+        argc >= 2 &&
+        std::string_view(argv[1]) == VFIDO_AUTH_HANDLER_COMMAND
+    ) {
+        return run_vfido_auth_handler(argc - 2, argv + 2);
+    }
+
     try {
         const Options options = parse_options(argc, argv);
         Authorization authorization;

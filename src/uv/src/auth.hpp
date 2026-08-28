@@ -11,4 +11,4 @@ int authenticate_user(
 );
 
 std::string get_user_name();
-bool collect_consent(std::string question);
+bool collect_consent(const std::string& question, std::stop_token stop);

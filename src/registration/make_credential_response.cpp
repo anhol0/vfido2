@@ -81,7 +81,10 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(
                 std::cout << "Authorize passkey creation" << std::endl;
 #endif
             cancellation_point(stop);
-            bool consent = collect_consent("Authorize passkey creation?");
+            bool consent = collect_consent(
+                "Authorize passkey creation?",
+                stop
+            );
             cancellation_point(stop);
 
             if(!consent) {

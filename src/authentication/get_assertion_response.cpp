@@ -68,7 +68,10 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(
             std::cout << "Authorize passkey usage" << std::endl;
 #endif
             cancellation_point(stop);
-            const bool consent = collect_consent("Authorize passkey usage?");
+            const bool consent = collect_consent(
+                "Authorize passkey usage?",
+                stop
+            );
             cancellation_point(stop);
 
             if(!consent) {
