@@ -4,8 +4,56 @@
 #include <cstdint>
 #include <iostream>
 #include <set>
+#include <utility>
 
 #include "cbor_operations/cbor_utils.hpp"
+
+void AssertionSequence::begin(
+    uint32_t origin_cid,
+    std::vector<StoredCredential> remaining_credentials,
+    Clock::time_point now
+) {
+    clear();
+    if(origin_cid == 0 || remaining_credentials.empty()) {
+        return;
+    }
+
+    originCid_ = origin_cid;
+    credentials_ = std::move(remaining_credentials);
+    lastUse_ = now;
+}
+
+std::optional<StoredCredential> AssertionSequence::next(
+    uint32_t cid,
+    Clock::time_point now
+) {
+    if(originCid_ == 0 || cid != originCid_) {
+        return std::nullopt;
+    }
+    if(now - lastUse_ > TIMEOUT || index_ >= credentials_.size()) {
+        clear();
+        return std::nullopt;
+    }
+
+    auto credential = credentials_[index_++];
+    if(index_ == credentials_.size()) {
+        clear();
+    } else {
+        lastUse_ = now;
+    }
+    return credential;
+}
+
+void AssertionSequence::clear() noexcept {
+    credentials_.clear();
+    index_ = 0;
+    originCid_ = 0;
+    lastUse_ = {};
+}
+
+uint32_t AssertionSequence::origin_cid() const noexcept {
+    return originCid_;
+}
 
 bool CTAPGetAssertionRequest::parseRequest(
     std::vector<uint8_t>& payload

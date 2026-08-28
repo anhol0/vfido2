@@ -140,6 +140,10 @@ CTAPPacket handle_cbor(
     CTAPPacket packet;
     const uint8_t command = request.payload[0];
     std::vector<uint8_t> payload;
+    static CTAPGetAssertionRequest gar;
+    if(command != 0x02 && command != 0x08) {
+        gar.clear();
+    }
     // Payload generation
     if(command == 0x04) {              // authenticatorGetInfo
         // CBOR
@@ -193,7 +197,6 @@ CTAPPacket handle_cbor(
         }
 #endif
 
-        static CTAPGetAssertionRequest gar;
         if(command == 0x02) {
             // Since gar is static for caching purposes (see authenticatorGetNextAssertion),
             // It needs to be wiped before next authenticatorGetAssertion request can be processed
@@ -211,8 +214,6 @@ CTAPPacket handle_cbor(
                     CTAPError::CTAP2_ERR_UNSUPPORTED_OPTION
                 );
             }
-            gar.set_origin_cid(request.cid);
-
             try {
                 payload = gar.build_response(
                     request, stop, store, key_provider
@@ -237,17 +238,20 @@ CTAPPacket handle_cbor(
 
             try {
                 payload = gar.build_response_next(
-                    stop, store, key_provider
+                    request.cid, stop, store, key_provider
                 );
             } catch (const OperationCancelled&) {
+                gar.clear();
                 throw;
             } catch (const std::exception &e) {
                 std::cerr << "Error building next response: " << e.what() << "\n";
+                gar.clear();
                 return make_cbor_error(request.cid, CTAPError::CTAP1_ERR_OTHER);
             }
         }
 
         if(payload.size() == 1) {
+            gar.clear();
             std::cout << "Build single-byte payload\n";
             return make_cbor_error(request.cid, static_cast<CTAPError>(payload[0]));
         }

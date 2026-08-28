@@ -1,5 +1,7 @@
 #pragma once
 
+#include <chrono>
+#include <cstddef>
 #include <optional>
 #include <string>
 #include <vector>
@@ -15,43 +17,66 @@
 
 class CredentialKeyProvider;
 
-// Cache class
-class StoredCredentialsCache {
-    private:
-    std::vector<StoredCredential> cache = {};
-    uint32_t index = 0;
-    uint32_t size = 0;
-    public:
-    operator std::vector<StoredCredential>() const { return cache; }
-    StoredCredentialsCache& operator =(const std::vector<StoredCredential>& other) {
-        cache = other;
-        size = cache.size();
-        index = 0;
-        return *this;
+enum class AssertionInteraction {
+    None,
+    Presence,
+    Verification
+};
+
+[[nodiscard]] constexpr AssertionInteraction assertion_interaction(
+    bool user_presence_requested,
+    bool user_verification_requested
+) noexcept {
+    if(user_verification_requested) {
+        return AssertionInteraction::Verification;
     }
-    std::optional<StoredCredential> get_next() {
-        if(index >= cache.size()) { return std::nullopt; }
-        size = cache.size() - index;
-        return cache[index++];
+    if(user_presence_requested) {
+        return AssertionInteraction::Presence;
     }
-    int32_t get_size() {
-        return size;
-    }
-    void clear() {
-        cache.clear();
-        index = 0;
-        size = 0;
-    }
+    return AssertionInteraction::None;
+}
+
+[[nodiscard]] constexpr uint8_t assertion_authenticator_flags(
+    bool user_present,
+    bool user_verified
+) noexcept {
+    return static_cast<uint8_t>(
+        (user_present ? 0x01 : 0x00) |
+        (user_verified ? 0x04 : 0x00)
+    );
+}
+
+class AssertionSequence {
+public:
+    using Clock = std::chrono::steady_clock;
+
+    void begin(
+        uint32_t origin_cid,
+        std::vector<StoredCredential> remaining_credentials,
+        Clock::time_point now = Clock::now()
+    );
+    [[nodiscard]] std::optional<StoredCredential> next(
+        uint32_t cid,
+        Clock::time_point now = Clock::now()
+    );
+    void clear() noexcept;
+    [[nodiscard]] uint32_t origin_cid() const noexcept;
+
+private:
+    // CTAP requires GetNextAssertion calls to arrive within 30 seconds.
+    static constexpr auto TIMEOUT = std::chrono::seconds(30);
+
+    std::vector<StoredCredential> credentials_;
+    std::size_t index_ = 0;
+    uint32_t originCid_ = 0;
+    Clock::time_point lastUse_{};
 };
 
 class CTAPGetAssertionRequest {
 public:
     uint32_t get_origin_cid() const {
-        return origin_cid;
+        return sequence.origin_cid();
     };
-    void set_origin_cid(uint32_t cid) {
-        origin_cid = cid;
-    }
     [[nodiscard]] bool has_rk_option() const noexcept {
         return rk_option_present;
     }
@@ -63,6 +88,7 @@ public:
         CredentialKeyProvider& key_provider
     );
     std::vector<uint8_t> build_response_next(
+        uint32_t cid,
         std::stop_token stop,
         CredentialStore& store,
         CredentialKeyProvider& key_provider
@@ -79,11 +105,11 @@ public:
         rk_option_present = false;
         pinAuth.clear();
         pinProtocol = 0;
-        origin_cid = 0;
-        cache.clear();
+        userPresent = false;
+        userVerified = false;
+        sequence.clear();
     }
 private:
-    uint32_t origin_cid = 0;
     std::string rpId;
     std::vector<uint8_t> clientDataHash;
     std::vector<PublicKeyCredentialDescriptor> allowList;
@@ -95,6 +121,8 @@ private:
     bool rk_option_present = false;
     std::vector<uint8_t> pinAuth;
     uint64_t pinProtocol = 0;
+    bool userPresent = false;
+    bool userVerified = false;
     void parse_rp_id(CborValue &map);
     void parse_client_data_hash(CborValue &map);
     void parse_allow_list(CborValue &map);
@@ -103,7 +131,7 @@ private:
     void parse_pin_auth(CborValue &map);
     void parse_pin_protocol(CborValue &map);
     using ParseFn = void (CTAPGetAssertionRequest::*) (CborValue &value);
-    StoredCredentialsCache cache;
+    AssertionSequence sequence;
     std::vector<uint8_t> generate_single_credential_payload (
         StoredCredential &credential,
         std::optional<uint32_t> number_of_credentials,
@@ -121,7 +149,4 @@ private:
         &CTAPGetAssertionRequest::parse_pin_auth,
         &CTAPGetAssertionRequest::parse_pin_protocol
     };
-    void clear_cache() {
-        cache.clear();
-    }
 };
