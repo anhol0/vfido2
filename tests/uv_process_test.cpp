@@ -1,4 +1,5 @@
 #include "cancellation.hpp"
+#include "keepalive.hpp"
 #include "uv/src/cancellable_process.hpp"
 
 #include <atomic>
@@ -6,6 +7,7 @@
 #include <filesystem>
 #include <iostream>
 #include <stop_token>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <unistd.h>
@@ -25,7 +27,8 @@ bool test_exit_status(const std::string& executable) {
     CHECK(vfido::uv::run_cancellable_program(
         executable,
         {"--child-exit"},
-        stop.get_token()
+        stop.get_token(),
+        std::chrono::seconds(1)
     ) == 17);
     return true;
 }
@@ -40,7 +43,8 @@ bool test_cancellation_interrupts_child(const std::string& executable) {
             static_cast<void>(vfido::uv::run_cancellable_program(
                 executable,
                 {"--child-wait"},
-                stop
+                stop,
+                std::chrono::seconds(5)
             ));
         } catch(const OperationCancelled&) {
             cancelled = true;
@@ -60,6 +64,50 @@ bool test_cancellation_interrupts_child(const std::string& executable) {
     return true;
 }
 
+bool test_timeout_interrupts_child(const std::string& executable) {
+    std::stop_source stop;
+    bool timed_out = false;
+    bool unexpected_error = false;
+    const auto started = std::chrono::steady_clock::now();
+
+    try {
+        static_cast<void>(vfido::uv::run_cancellable_program(
+            executable,
+            {"--child-wait"},
+            stop.get_token(),
+            std::chrono::milliseconds(50)
+        ));
+    } catch(const UserActionTimedOut&) {
+        timed_out = true;
+    } catch(...) {
+        unexpected_error = true;
+    }
+
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+    CHECK(timed_out);
+    CHECK(!unexpected_error);
+    CHECK(elapsed < std::chrono::seconds(1));
+    return true;
+}
+
+bool test_user_action_keepalive_scope() {
+    KeepaliveState keepalive;
+    CHECK(keepalive.get() == KeepaliveStatus::processing);
+    {
+        UserActionKeepaliveGuard waiting_for_user(keepalive);
+        CHECK(keepalive.get() == KeepaliveStatus::up_needed);
+    }
+    CHECK(keepalive.get() == KeepaliveStatus::processing);
+
+    try {
+        UserActionKeepaliveGuard waiting_for_user(keepalive);
+        throw std::runtime_error("test exception");
+    } catch(const std::runtime_error&) {
+    }
+    CHECK(keepalive.get() == KeepaliveStatus::processing);
+    return true;
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -73,8 +121,10 @@ int main(int argc, char** argv) {
     const std::string executable = std::filesystem::canonical(argv[0]);
     const bool success =
         test_exit_status(executable) &&
-        test_cancellation_interrupts_child(executable);
+        test_cancellation_interrupts_child(executable) &&
+        test_timeout_interrupts_child(executable) &&
+        test_user_action_keepalive_scope();
     if(success)
-        std::cout << "2/2 UV process tests passed\n";
+        std::cout << "4/4 UV process tests passed\n";
     return success ? 0 : 1;
 }
