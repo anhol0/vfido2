@@ -5,6 +5,7 @@
 #include "extensions.hpp"
 
 class CredentialKeyProvider;
+class KeepaliveState;
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -64,7 +65,8 @@ class CTAPMakeCredentialRequest {
             UHIDReport& r,
             std::stop_token stop,
             CredentialStore& store,
-            CredentialKeyProvider& key_provider
+            CredentialKeyProvider& key_provider,
+            KeepaliveState& keepalive
         );
     private:
         void parse_client_data_hash(CborValue &map); // Required

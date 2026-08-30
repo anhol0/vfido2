@@ -2,6 +2,7 @@
 
 #include "cancellation.hpp"
 
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <condition_variable>
@@ -143,11 +144,16 @@ private:
 int run_cancellable_program(
     const std::string& path,
     const std::vector<std::string>& arguments,
-    std::stop_token stop
+    std::stop_token stop,
+    std::chrono::steady_clock::duration timeout
 ) {
     cancellation_point(stop);
     if(path.empty())
         throw std::invalid_argument("child program path is empty");
+    if(timeout <= std::chrono::steady_clock::duration::zero())
+        throw std::invalid_argument("child program timeout must be positive");
+
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
 
     std::vector<char*> argv;
     argv.reserve(arguments.size() + 2);
@@ -193,9 +199,18 @@ int run_cancellable_program(
         if(const auto status = child.poll())
             return *status;
 
-        wait_condition.wait_for(
+        const auto now = std::chrono::steady_clock::now();
+        if(now >= deadline) {
+            child.terminate_and_reap();
+            throw UserActionTimedOut{};
+        }
+
+        wait_condition.wait_until(
             wait_lock,
-            std::chrono::milliseconds(20),
+            std::min(
+                deadline,
+                now + std::chrono::milliseconds(20)
+            ),
             [stop] { return stop.stop_requested(); }
         );
     }

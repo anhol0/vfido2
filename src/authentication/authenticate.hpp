@@ -16,6 +16,7 @@
 #include "extensions.hpp"
 
 class CredentialKeyProvider;
+class KeepaliveState;
 
 enum class AssertionInteraction {
     None,
@@ -85,7 +86,8 @@ public:
         UHIDReport& r,
         std::stop_token stop,
         CredentialStore& store,
-        CredentialKeyProvider& key_provider
+        CredentialKeyProvider& key_provider,
+        KeepaliveState& keepalive
     );
     std::vector<uint8_t> build_response_next(
         uint32_t cid,

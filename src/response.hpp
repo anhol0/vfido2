@@ -11,6 +11,7 @@
 #include "uhid_report.hpp"
 
 class CredentialKeyProvider;
+class KeepaliveState;
 
 constexpr uint8_t MASK = 0x80;
 
@@ -43,5 +44,6 @@ CTAPPacket handle_cbor(
     UHIDReport& request,
     std::stop_token stop,
     CredentialStore& store,
-    CredentialKeyProvider& key_provider
+    CredentialKeyProvider& key_provider,
+    KeepaliveState& keepalive
 );

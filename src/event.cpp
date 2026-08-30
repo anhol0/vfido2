@@ -5,6 +5,7 @@
 #include <exception>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
@@ -20,6 +21,7 @@
 #include "response.hpp"
 #include "error.hpp"
 #include "frame_processor.hpp"
+#include "keepalive.hpp"
 #include "uhid_report.hpp"
 
 // PACKET STRUCTURE
@@ -30,15 +32,10 @@
 // Padding (zero everything until 64 bytes)
 
 namespace {
-    enum class KeepaliveStatus : uint8_t {
-        processing = 1,
-        up_neeeded = 2
-    };
-
     struct ActiveTask {
         uint64_t generation;
         uint32_t cid;
-        KeepaliveStatus status;
+        std::shared_ptr<KeepaliveState> keepalive;
         std::chrono::steady_clock::time_point next_keepalive;
         bool cancel_requested = false;
         bool discard_result = false;
@@ -290,10 +287,11 @@ void run(
                         }
 
                         uint64_t generation = next_generation++;
+                        auto keepalive = std::make_shared<KeepaliveState>();
                         active = ActiveTask {
                             .generation = generation,
                             .cid = request.cid,
-                            .status = KeepaliveStatus::processing,
+                            .keepalive = keepalive,
                             .next_keepalive =
                                 std::chrono::steady_clock::now() +
                                 std::chrono::milliseconds(100)
@@ -306,7 +304,8 @@ void run(
                                 &completion_mutex,
                                 &completion,
                                 &store,
-                                &key_provider
+                                &key_provider,
+                                keepalive
                             ]
                             (std::stop_token stop) mutable
                         {
@@ -319,13 +318,19 @@ void run(
                                     std::move(request),
                                     stop,
                                     store,
-                                    key_provider
+                                    key_provider,
+                                    *keepalive
                                 );
                             } catch (const OperationCancelled &e) {
                                 std::cout << "Exception: " <<  e.what() << std::endl;
                                 result.packet = make_cbor_error(
                                     result.cid,
                                     CTAPError::CTAP2_ERR_KEEPALIVE_CANCEL
+                                );
+                            } catch (const UserActionTimedOut&) {
+                                result.packet = make_cbor_error(
+                                    result.cid,
+                                    CTAPError::CTAP2_ERR_USER_ACTION_TIMEOUT
                                 );
                             } catch (const std::exception &e) {
                                 std::cout << "Exception: " << e.what() << std::endl;
@@ -373,7 +378,7 @@ void run(
             send_keepalive(
                 device,
                 active->cid,
-                active->status
+                active->keepalive->get()
             );
             active->next_keepalive = keepalive_now + std::chrono::milliseconds(100);
         }

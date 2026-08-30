@@ -135,7 +135,8 @@ CTAPPacket handle_cbor(
     UHIDReport& request,
     std::stop_token stop,
     CredentialStore& store,
-    CredentialKeyProvider& key_provider
+    CredentialKeyProvider& key_provider,
+    KeepaliveState& keepalive
 ) {
     CTAPPacket packet;
     const uint8_t command = request.payload[0];
@@ -169,9 +170,11 @@ CTAPPacket handle_cbor(
         // Building the response
         try {
             payload = mcr.build_response(
-                request, stop, store, key_provider
+                request, stop, store, key_provider, keepalive
             );
         } catch (const OperationCancelled&) {
+            throw;
+        } catch (const UserActionTimedOut&) {
             throw;
         } catch(std::exception &e) {
             std::cerr << "There is a problem with the authenticatorMakeCredential request: " << e.what() << "\n";
@@ -216,9 +219,12 @@ CTAPPacket handle_cbor(
             }
             try {
                 payload = gar.build_response(
-                    request, stop, store, key_provider
+                    request, stop, store, key_provider, keepalive
                 );
             } catch (const OperationCancelled &e) {
+                gar.clear();
+                throw;
+            } catch (const UserActionTimedOut&) {
                 gar.clear();
                 throw;
             } catch (const std::exception& e) {
@@ -241,6 +247,9 @@ CTAPPacket handle_cbor(
                     request.cid, stop, store, key_provider
                 );
             } catch (const OperationCancelled&) {
+                gar.clear();
+                throw;
+            } catch (const UserActionTimedOut&) {
                 gar.clear();
                 throw;
             } catch (const std::exception &e) {

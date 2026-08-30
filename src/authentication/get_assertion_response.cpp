@@ -18,7 +18,8 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(
     UHIDReport& r,
     std::stop_token stop,
     CredentialStore& store,
-    CredentialKeyProvider& key_provider
+    CredentialKeyProvider& key_provider,
+    KeepaliveState& keepalive
 )
 {
     cancellation_point(stop);
@@ -51,7 +52,7 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(
  #endif
 
             const int rc = authenticate_user(
-                username, procname, confdir, stop
+                username, procname, confdir, stop, keepalive
             );
             cancellation_point(stop);
             if(rc != 0) {
@@ -70,7 +71,8 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(
             cancellation_point(stop);
             const bool consent = collect_consent(
                 "Authorize passkey usage?",
-                stop
+                stop,
+                keepalive
             );
             cancellation_point(stop);
 

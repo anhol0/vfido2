@@ -26,7 +26,8 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(
     UHIDReport& r,
     std::stop_token stop,
     CredentialStore& store,
-    CredentialKeyProvider& key_provider
+    CredentialKeyProvider& key_provider,
+    KeepaliveState& keepalive
 ) {
     cancellation_point(stop);
     if(excludeList.size() > 0) {
@@ -71,7 +72,9 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(
             const std::string confdir = "/etc/vfido2/config";
 #endif
 
-            int rc = authenticate_user(username, procname, confdir, stop);
+            int rc = authenticate_user(
+                username, procname, confdir, stop, keepalive
+            );
             cancellation_point(stop);
             if(rc != 0) {
                 return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_UV_BLOCKED)};
@@ -83,7 +86,8 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(
             cancellation_point(stop);
             bool consent = collect_consent(
                 "Authorize passkey creation?",
-                stop
+                stop,
+                keepalive
             );
             cancellation_point(stop);
 
