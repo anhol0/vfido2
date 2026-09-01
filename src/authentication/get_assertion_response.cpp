@@ -176,10 +176,8 @@ std::vector<uint8_t> CTAPGetAssertionRequest::generate_single_credential_payload
     // If there is only 1 credential matched by the authenticator
     // Omit fields 0x01 and 0x04
     // If allowList was empty or > 1 credential was found, include these two fields must be included
-    std::optional<StoredCredential> descriptor = std::nullopt;
-    if(allowList.size() != 1) {
-        descriptor = credential;
-    }
+    const StoredCredential* descriptor =
+        allowList.size() != 1 ? &credential : nullptr;
 
     // Generating the payload
     auto payload = build_authenticatorGetAssertion_response(

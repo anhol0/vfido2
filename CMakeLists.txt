@@ -16,6 +16,11 @@ add_library(ctaphid_frame_processor
 )
 target_include_directories(ctaphid_frame_processor PUBLIC ${SOURCE_DIR})
 
+add_library(ctaphid_packet
+    ${SOURCE_DIR}/packet.cpp
+)
+target_include_directories(ctaphid_packet PUBLIC ${SOURCE_DIR})
+
 add_executable(${PN}
     # Uncategorized
     ${SOURCE_DIR}/${PN}.cpp
@@ -70,6 +75,7 @@ target_link_libraries(${PN} PRIVATE
     ${TSS2_RC_LIBRARIES}
     ${TSS2_MU_LIBRARIES}
     ctaphid_frame_processor
+    ctaphid_packet
     uv
 )
 

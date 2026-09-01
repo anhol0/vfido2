@@ -4,8 +4,9 @@
 #include <cstdint>
 #include <vector>
 
-constexpr size_t MAX_INIT_PAYLOAD_SIZE = 57; // 64 - 4 - 1 - 2
-constexpr size_t MAX_CONT_PAYLOAD_SIZE = 59; // 64 - 4 - 1
+inline constexpr std::size_t CTAPHID_MAX_PAYLOAD_SIZE = 7609;
+inline constexpr std::size_t MAX_INIT_PAYLOAD_SIZE = 57; // 64 - 4 - 1 - 2
+inline constexpr std::size_t MAX_CONT_PAYLOAD_SIZE = 59; // 64 - 4 - 1
 
 class UHIDReport {
 public:

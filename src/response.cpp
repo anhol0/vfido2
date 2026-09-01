@@ -1,5 +1,6 @@
 #include <exception>
 #include <cstdint>
+#include <utility>
 #include <vector>
 #include "response.hpp"
 #include "cancellation.hpp"
@@ -14,47 +15,15 @@ constexpr uint8_t CAPABILITY_WINK = 0x01;
 constexpr uint8_t CAPABILITY_CBOR = 0x04;
 constexpr uint8_t CAPABILITY_NMSG = 0x08;
 
-std::vector<std::vector<uint8_t>> CTAPPacket::stringify() {
-    std::vector<std::vector<uint8_t>> out;
-    std::vector<uint8_t> out_v;
-    std::vector<uint8_t> channel_id;
-    channel_id.push_back(cid >> 24 & 0xFF);
-    channel_id.push_back(cid >> 16 & 0xFF);
-    channel_id.push_back(cid >>  8 & 0xFF);
-    channel_id.push_back(cid >>  0 & 0xFF);
-    // Building initialization packet header
-    out_v.insert(out_v.end(), channel_id.begin(), channel_id.end());
-    out_v.push_back(cmd);
-    out_v.push_back(len >> 8 & 0xFF);
-    out_v.push_back(len >> 0 & 0xFF);
-    int i = 0;
-    while(out_v.size() < 64) {
-        if(i < payload.size()) {
-            out_v.push_back(payload[i]);
-        } else
-            out_v.push_back(0x00);
-        i++;
-    }
-    out.push_back(out_v);
-    if(i < payload.size()) {
-        uint8_t sequence = 0;
-        while(i < payload.size()) {
-            std::vector<uint8_t> v;
-            v.insert(v.end(), channel_id.begin(), channel_id.end());
-            v.push_back(sequence);
-            while(v.size() < 64) {
-                if(i < payload.size()) {
-                    v.push_back(payload[i++]);
-                } else {
-                    v.push_back(0x00);
-                }
-            }
-            out.push_back(v);
-            sequence++;
-        }
-    }
-    return out;
+namespace {
+
+CTAPError encoding_error_to_ctap(const CborEncodingError& error) noexcept {
+    return error.failure() == CborEncodingFailure::resource_limit
+        ? CTAPError::CTAP2_ERR_REQUEST_TOO_LARGE
+        : CTAPError::CTAP1_ERR_OTHER;
 }
+
+} // namespace
 
 CTAPPacket handle_init(UHIDReport &request, uint32_t assigned_cid) {
     CTAPPacket response;
@@ -117,10 +86,14 @@ CTAPPacket handle_cbor(
     }
     // Payload generation
     if(command == 0x04) {              // authenticatorGetInfo
-        // CBOR
-        auto cbor = build_getinfo_response();
-        // Encoding JSON in CBOR
-        payload.insert(payload.end(), cbor.begin(), cbor.end());
+        try {
+            payload = build_getinfo_response();
+        } catch(const CborEncodingError& error) {
+            return make_cbor_error(
+                request.cid,
+                encoding_error_to_ctap(error)
+            );
+        }
     }
 
     else if(command == 0x01) {       // authenticatorMakeCredential
@@ -141,6 +114,11 @@ CTAPPacket handle_cbor(
             throw;
         } catch (const UserActionTimedOut&) {
             throw;
+        } catch(const CborEncodingError& error) {
+            return make_cbor_error(
+                request.cid,
+                encoding_error_to_ctap(error)
+            );
         } catch(const std::exception&) {
             return make_cbor_error(request.cid, CTAPError::CTAP1_ERR_OTHER);
         }
@@ -181,6 +159,12 @@ CTAPPacket handle_cbor(
             } catch (const UserActionTimedOut&) {
                 gar.clear();
                 throw;
+            } catch(const CborEncodingError& error) {
+                gar.clear();
+                return make_cbor_error(
+                    request.cid,
+                    encoding_error_to_ctap(error)
+                );
             } catch (const std::exception&) {
                 gar.clear();
                 return make_cbor_error(request.cid, CTAPError::CTAP1_ERR_OTHER);
@@ -205,6 +189,12 @@ CTAPPacket handle_cbor(
             } catch (const UserActionTimedOut&) {
                 gar.clear();
                 throw;
+            } catch(const CborEncodingError& error) {
+                gar.clear();
+                return make_cbor_error(
+                    request.cid,
+                    encoding_error_to_ctap(error)
+                );
             } catch (const std::exception&) {
                 gar.clear();
                 return make_cbor_error(request.cid, CTAPError::CTAP1_ERR_OTHER);
@@ -220,7 +210,13 @@ CTAPPacket handle_cbor(
     }
     packet.cid = request.cid;
     packet.cmd = CTAPHID_CBOR | MASK;
-    packet.len = (uint16_t)payload.size();
-    packet.payload = payload;
+    if(payload.size() > CTAPHID_MAX_PAYLOAD_SIZE) {
+        return make_cbor_error(
+            request.cid,
+            CTAPError::CTAP2_ERR_REQUEST_TOO_LARGE
+        );
+    }
+    packet.len = static_cast<uint16_t>(payload.size());
+    packet.payload = std::move(payload);
     return packet;
 }

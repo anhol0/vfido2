@@ -1,234 +1,301 @@
 #include "cbor.hpp"
+
 #include "const.hpp"
+#include "uhid_report.hpp"
+
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
-#include <nlohmann/detail/value_t.hpp>
-#include <stdexcept>
+#include <new>
+#include <span>
 #include <string>
 #include <tinycbor/cbor.h>
+#include <utility>
 #include <vector>
 
-// Returning the authenticator information
-// Currently, AAGUID is zeroed out
-// It will be replaced with a real one after I recieve confirmation from https://mymds.fidoalliance.org/
-std::vector<uint8_t> build_getinfo_response() {
-    uint8_t buffer[256];
+namespace {
 
-    CborEncoder encoder;
-    CborEncoder map;
-    CborEncoder versions;
-    CborEncoder options;
+struct BoundedCborOutput {
+    std::vector<uint8_t> bytes;
+};
 
-    cbor_encoder_init(&encoder, buffer, sizeof(buffer), 0);
-
-    // map with 3 entries
-    cbor_encoder_create_map(&encoder, &map, 3);
-
-    // 1: ["FIDO_2_0"]
-    cbor_encode_uint(&map, 1);
-
-    cbor_encoder_create_array(&map, &versions, 1);
-    cbor_encode_text_stringz(&versions, "FIDO_2_0");
-    cbor_encoder_close_container(&map, &versions);
-
-    // 3: aaguid (16 zero bytes)
-    cbor_encode_uint(&map, 3);
-
-    cbor_encode_byte_string(&map, aaguid.data(), 16);
-
-    // 4: options
-    cbor_encode_uint(&map, 4);
-
-    cbor_encoder_create_map(&map, &options, 3);
-
-    cbor_encode_text_stringz(&options, "rk");
-    cbor_encode_boolean(&options, true);
-
-    cbor_encode_text_stringz(&options, "up");
-    cbor_encode_boolean(&options, true);
-
-    cbor_encode_text_stringz(&options, "uv");
-    cbor_encode_boolean(&options, true);
-
-    cbor_encoder_close_container(&map, &options);
-
-    cbor_encoder_close_container(&encoder, &map);
-
-    size_t len = cbor_encoder_get_buffer_size(&encoder, buffer);
-
-    std::vector<uint8_t> out;
-
-    // CTAP success byte
-    out.push_back(0x00);
-
-    out.insert(out.end(), buffer, buffer + len);
-
-    return out;
+CborEncodingFailure classify_error(CborError error) noexcept {
+    if(
+        error == CborErrorOutOfMemory ||
+        error == CborErrorDataTooLarge
+    ) {
+        return CborEncodingFailure::resource_limit;
+    }
+    return CborEncodingFailure::invalid_structure;
 }
 
-std::vector<uint8_t> pad32(std::vector<uint8_t> &v) {
-    if(v.size() > 32)
-        throw std::runtime_error("ECC coordinate too large!");
+void check(CborError error) {
+    if(error != CborNoError)
+        throw CborEncodingError(classify_error(error));
+}
 
-    std::vector<uint8_t> out(32, 0);
-    memcpy(out.data() + (32 - v.size()), v.data(), v.size());
-    return out;
+CborError append_cbor(
+    void* context,
+    const void* data,
+    std::size_t size,
+    CborEncoderAppendType
+) noexcept {
+    auto& output = *static_cast<BoundedCborOutput*>(context);
+    if(
+        output.bytes.size() > CTAPHID_MAX_PAYLOAD_SIZE ||
+        size > CTAPHID_MAX_PAYLOAD_SIZE - output.bytes.size()
+    ) {
+        return CborErrorDataTooLarge;
+    }
+    if(size == 0)
+        return CborNoError;
+
+    try {
+        const auto* first = static_cast<const uint8_t*>(data);
+        output.bytes.insert(output.bytes.end(), first, first + size);
+        return CborNoError;
+    } catch(const std::bad_alloc&) {
+        return CborErrorOutOfMemory;
+    } catch(...) {
+        return CborErrorDataTooLarge;
+    }
+}
+
+template<typename Encode>
+std::vector<uint8_t> encode_cbor(bool include_success_status, Encode&& encode) {
+    BoundedCborOutput output;
+    try {
+        if(include_success_status)
+            output.bytes.push_back(0x00);
+    } catch(const std::bad_alloc&) {
+        throw CborEncodingError(CborEncodingFailure::resource_limit);
+    }
+
+    CborEncoder encoder;
+    cbor_encoder_init_writer(&encoder, append_cbor, &output);
+    try {
+        std::forward<Encode>(encode)(encoder);
+    } catch(const CborEncodingError&) {
+        throw;
+    } catch(const std::bad_alloc&) {
+        throw CborEncodingError(CborEncodingFailure::resource_limit);
+    }
+    return std::move(output.bytes);
+}
+
+std::vector<uint8_t> pad32(std::span<const uint8_t> value) {
+    if(value.size() > 32)
+        throw CborEncodingError(CborEncodingFailure::invalid_structure);
+
+    try {
+        std::vector<uint8_t> result(32, 0);
+        std::copy(value.begin(), value.end(), result.end() - value.size());
+        return result;
+    } catch(const std::bad_alloc&) {
+        throw CborEncodingError(CborEncodingFailure::resource_limit);
+    }
+}
+
+void encode_text(CborEncoder& encoder, const std::string& value) {
+    check(cbor_encode_text_string(
+        &encoder,
+        value.data(),
+        value.size()
+    ));
+}
+
+} // namespace
+
+CborEncodingError::CborEncodingError(CborEncodingFailure failure)
+    : std::runtime_error("CBOR response encoding failed"),
+      failure_(failure) {}
+
+CborEncodingFailure CborEncodingError::failure() const noexcept {
+    return failure_;
+}
+
+std::vector<uint8_t> build_getinfo_response() {
+    return encode_cbor(true, [](CborEncoder& encoder) {
+        CborEncoder map;
+        check(cbor_encoder_create_map(&encoder, &map, 3));
+
+        check(cbor_encode_uint(&map, 1));
+        CborEncoder versions;
+        check(cbor_encoder_create_array(&map, &versions, 1));
+        check(cbor_encode_text_stringz(&versions, "FIDO_2_0"));
+        check(cbor_encoder_close_container_checked(&map, &versions));
+
+        check(cbor_encode_uint(&map, 3));
+        check(cbor_encode_byte_string(
+            &map,
+            aaguid.data(),
+            aaguid.size()
+        ));
+
+        check(cbor_encode_uint(&map, 4));
+        CborEncoder options;
+        check(cbor_encoder_create_map(&map, &options, 3));
+        check(cbor_encode_text_stringz(&options, "rk"));
+        check(cbor_encode_boolean(&options, true));
+        check(cbor_encode_text_stringz(&options, "up"));
+        check(cbor_encode_boolean(&options, true));
+        check(cbor_encode_text_stringz(&options, "uv"));
+        check(cbor_encode_boolean(&options, true));
+        check(cbor_encoder_close_container_checked(&map, &options));
+
+        check(cbor_encoder_close_container_checked(&encoder, &map));
+    });
 }
 
 std::vector<uint8_t> build_cose_key(
-        std::vector<uint8_t> &x,
-        std::vector<uint8_t> &y
+    std::span<const uint8_t> x,
+    std::span<const uint8_t> y
 ) {
-    auto x_pad = pad32(x);
-    auto y_pad = pad32(y);
-    uint8_t buf[256];
-    CborEncoder encoder;
-    CborEncoder map;
-    cbor_encoder_init(&encoder, buf, sizeof(buf), 0);
+    const auto x_padded = pad32(x);
+    const auto y_padded = pad32(y);
 
-    CborError e = cbor_encoder_create_map(&encoder, &map, 5);
-    if(e != CborNoError)
-        throw std::runtime_error("Cannot create CBOR map: " + std::string(cbor_error_string(e)));
-    cbor_encode_int(&map, 1);
-    cbor_encode_int(&map, 2);
+    return encode_cbor(false, [&](CborEncoder& encoder) {
+        CborEncoder map;
+        check(cbor_encoder_create_map(&encoder, &map, 5));
 
-    cbor_encode_int(&map, 3);
-    cbor_encode_int(&map, -7);
+        check(cbor_encode_int(&map, 1));
+        check(cbor_encode_int(&map, 2));
+        check(cbor_encode_int(&map, 3));
+        check(cbor_encode_int(&map, -7));
+        check(cbor_encode_int(&map, -1));
+        check(cbor_encode_int(&map, 1));
+        check(cbor_encode_int(&map, -2));
+        check(cbor_encode_byte_string(
+            &map,
+            x_padded.data(),
+            x_padded.size()
+        ));
+        check(cbor_encode_int(&map, -3));
+        check(cbor_encode_byte_string(
+            &map,
+            y_padded.data(),
+            y_padded.size()
+        ));
 
-    cbor_encode_int(&map, -1);
-    cbor_encode_int(&map, 1);
-
-    cbor_encode_int(&map, -2);
-    cbor_encode_byte_string(&map, x_pad.data(), x_pad.size());
-
-    cbor_encode_int(&map, -3);
-    cbor_encode_byte_string(&map, y_pad.data(), y_pad.size());
-
-    e = cbor_encoder_close_container(&encoder, &map);
-    if(e != CborNoError)
-        throw std::runtime_error("Cannot close CBOR map: " + std::string(cbor_error_string(e)));
-
-    size_t len = cbor_encoder_get_buffer_size(&encoder, buf);
-
-    std::vector<uint8_t> out_v;
-
-    out_v.insert(out_v.end(), buf, buf + len);
-
-    return out_v;
+        check(cbor_encoder_close_container_checked(&encoder, &map));
+    });
 }
 
-std::vector<uint8_t> build_authenticatorMakeCredential_response(std::vector<uint8_t> &authData) {
-    uint8_t buf[1024];
-    CborEncoder encoder;
-    CborEncoder map;
-    CborEncoder attStmt;
-    cbor_encoder_init(&encoder, buf, sizeof(buf), 0);
+std::vector<uint8_t> build_authenticatorMakeCredential_response(
+    std::span<const uint8_t> auth_data
+) {
+    return encode_cbor(true, [&](CborEncoder& encoder) {
+        CborEncoder map;
+        check(cbor_encoder_create_map(&encoder, &map, 3));
 
-    cbor_encoder_create_map(&encoder, &map, 3);
+        check(cbor_encode_uint(&map, 1));
+        check(cbor_encode_text_stringz(&map, "none"));
 
-    // 1: fmt
-    cbor_encode_uint(&map, 1);
-    cbor_encode_text_stringz(&map, "none");
+        check(cbor_encode_uint(&map, 2));
+        check(cbor_encode_byte_string(
+            &map,
+            auth_data.data(),
+            auth_data.size()
+        ));
 
-    // 2: authData
-    cbor_encode_uint(&map, 2);
-    cbor_encode_byte_string(&map, authData.data(), authData.size());
+        check(cbor_encode_uint(&map, 3));
+        CborEncoder attestation_statement;
+        check(cbor_encoder_create_map(
+            &map,
+            &attestation_statement,
+            0
+        ));
+        check(cbor_encoder_close_container_checked(
+            &map,
+            &attestation_statement
+        ));
 
-    // 3: attStmt
-    cbor_encode_uint(&map, 3);
-    cbor_encoder_create_map(&map, &attStmt, 0);
-    cbor_encoder_close_container(&map, &attStmt);
-
-    cbor_encoder_close_container(&encoder, &map);
-
-    size_t len = cbor_encoder_get_buffer_size(&encoder, buf);
-    std::vector<uint8_t> out;
-    out.push_back(0x00);  // CTAP success byte
-    out.insert(out.end(), buf, buf + len);
-    return out;
+        check(cbor_encoder_close_container_checked(&encoder, &map));
+    });
 }
 
 std::vector<uint8_t> build_authenticatorGetAssertion_response(
-        std::vector<uint8_t> &authData,
-        std::vector<uint8_t> &signature,
-        bool uv,
-        std::optional<StoredCredential> credential,
-        std::optional<uint32_t> numberOfCredentials
+    std::span<const uint8_t> auth_data,
+    std::span<const uint8_t> signature,
+    bool uv,
+    const StoredCredential* credential,
+    std::optional<uint32_t> number_of_credentials
 ) {
-    uint8_t buf[2048];
-    CborEncoder encoder;
-    CborEncoder map;
-    cbor_encoder_init(&encoder, buf, sizeof(buf), 0);
+    const std::size_t map_size = 2 +
+        (credential != nullptr ? 2 : 0) +
+        (number_of_credentials.has_value() ? 1 : 0);
 
-    // If the allowList has exactly 1 credential in it, we can omit credential field completely
-    // This allows map to be 2 fields in size
-    // Otherwize, map size is 3
+    return encode_cbor(true, [&](CborEncoder& encoder) {
+        CborEncoder map;
+        check(cbor_encoder_create_map(&encoder, &map, map_size));
 
-    size_t mapSize = 2;
-    if(credential) ++mapSize;
-    if(credential) ++mapSize;
-    if(numberOfCredentials.has_value() && numberOfCredentials.value())
-        mapSize++;
-
-    cbor_encoder_create_map(&encoder, &map, mapSize);
-    if(credential.has_value()) {
-        // credential: PublicKeyCredentialDescriptor (0x01)
-        cbor_encode_uint(&map, 0x01);
-        CborEncoder credenrialMap;
-        cbor_encoder_create_map(&map, &credenrialMap, 2); // id and type values. type is always public-key
-        cbor_encode_text_stringz(&credenrialMap, "id");
-        cbor_encode_byte_string(&credenrialMap, credential.value().id.data(), credential.value().id.size());
-
-        cbor_encode_text_stringz(&credenrialMap, "type");
-        cbor_encode_text_stringz(&credenrialMap, "public-key");
-
-        cbor_encoder_close_container(&map, &credenrialMap);
-    }
-
-    // authData: byte string (0x02)
-    cbor_encode_uint(&map, 0x02);
-    cbor_encode_byte_string(&map, authData.data(), authData.size());
-
-    // signature: byte string (0x03)
-    cbor_encode_uint(&map, 0x03);
-    cbor_encode_byte_string(&map, signature.data(), signature.size());
-
-
-    if(credential.has_value()) {
-        // user: PublicKeyCredentialUserEntity (0x04)
-        cbor_encode_uint(&map, 0x04);
-        CborEncoder userMap;
-        if(uv)
-            cbor_encoder_create_map(&map, &userMap, 3);
-        else
-            cbor_encoder_create_map(&map, &userMap, 1);
-
-        cbor_encode_text_stringz(&userMap, "id");
-        cbor_encode_byte_string(&userMap, credential.value().userId.data(), credential.value().userId.size());
-
-        if(uv) {
-            cbor_encode_text_stringz(&userMap, "name");
-            cbor_encode_text_stringz(&userMap, credential.value().userName.c_str());
-
-            cbor_encode_text_stringz(&userMap, "displayName");
-            cbor_encode_text_stringz(&userMap, credential.value().userDisplayName.c_str());
+        if(credential != nullptr) {
+            check(cbor_encode_uint(&map, 0x01));
+            CborEncoder credential_map;
+            check(cbor_encoder_create_map(&map, &credential_map, 2));
+            check(cbor_encode_text_stringz(&credential_map, "id"));
+            check(cbor_encode_byte_string(
+                &credential_map,
+                credential->id.data(),
+                credential->id.size()
+            ));
+            check(cbor_encode_text_stringz(&credential_map, "type"));
+            check(cbor_encode_text_stringz(
+                &credential_map,
+                "public-key"
+            ));
+            check(cbor_encoder_close_container_checked(
+                &map,
+                &credential_map
+            ));
         }
 
-        cbor_encoder_close_container(&map, &userMap);
-    }
+        check(cbor_encode_uint(&map, 0x02));
+        check(cbor_encode_byte_string(
+            &map,
+            auth_data.data(),
+            auth_data.size()
+        ));
 
-    // numberOfCredentials: unsigned 32 bit integer (0x05)
-    if(numberOfCredentials.has_value()) {
-        cbor_encode_uint(&map, 0x05);
-        cbor_encode_uint(&map, numberOfCredentials.value());
-    }
+        check(cbor_encode_uint(&map, 0x03));
+        check(cbor_encode_byte_string(
+            &map,
+            signature.data(),
+            signature.size()
+        ));
 
-    cbor_encoder_close_container(&encoder, &map);
+        if(credential != nullptr) {
+            check(cbor_encode_uint(&map, 0x04));
+            CborEncoder user_map;
+            check(cbor_encoder_create_map(
+                &map,
+                &user_map,
+                uv ? 3 : 1
+            ));
+            check(cbor_encode_text_stringz(&user_map, "id"));
+            check(cbor_encode_byte_string(
+                &user_map,
+                credential->userId.data(),
+                credential->userId.size()
+            ));
 
-    size_t len = cbor_encoder_get_buffer_size(&encoder, buf);
-    std::vector<uint8_t> out;
-    out.push_back(0x00);
-    out.insert(out.end(), buf, buf + len);
-    return out;
+            if(uv) {
+                check(cbor_encode_text_stringz(&user_map, "name"));
+                encode_text(user_map, credential->userName);
+                check(cbor_encode_text_stringz(
+                    &user_map,
+                    "displayName"
+                ));
+                encode_text(user_map, credential->userDisplayName);
+            }
+            check(cbor_encoder_close_container_checked(&map, &user_map));
+        }
+
+        if(number_of_credentials.has_value()) {
+            check(cbor_encode_uint(&map, 0x05));
+            check(cbor_encode_uint(&map, *number_of_credentials));
+        }
+
+        check(cbor_encoder_close_container_checked(&encoder, &map));
+    });
 }

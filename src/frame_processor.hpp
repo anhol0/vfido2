@@ -29,7 +29,8 @@ class CTAPHIDFrameProcessor {
 public:
     using Clock = std::chrono::steady_clock;
 
-    static constexpr std::size_t max_payload_size = 7609;
+    static constexpr std::size_t max_payload_size =
+        CTAPHID_MAX_PAYLOAD_SIZE;
     static constexpr auto message_assembly_timeout =
         std::chrono::seconds(3);
 
