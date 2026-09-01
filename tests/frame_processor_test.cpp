@@ -527,6 +527,56 @@ namespace {
         CHECK(!processor.has_incoming());
     }
 
+    void test_outgoing_payload_bounds_and_lengths() {
+        CTAPPacket maximum{
+            .cid = CID_A,
+            .cmd = static_cast<uint8_t>(CTAPHID_CBOR | MASK),
+            .len = static_cast<uint16_t>(CTAPHID_MAX_PAYLOAD_SIZE),
+            .payload = std::vector<uint8_t>(
+                CTAPHID_MAX_PAYLOAD_SIZE,
+                0xA5
+            )
+        };
+        const auto frames = maximum.stringify();
+        CHECK(frames.size() == 129);
+        CHECK(std::all_of(frames.begin(), frames.end(), [](const auto& frame) {
+            return frame.size() == 64;
+        }));
+        CHECK(frames.front()[4] == (CTAPHID_CBOR | MASK));
+        CHECK(frames.back()[4] == 127);
+
+        CTAPPacket mismatched{
+            .cid = CID_A,
+            .cmd = static_cast<uint8_t>(CTAPHID_CBOR | MASK),
+            .len = 2,
+            .payload = {0x00}
+        };
+        bool mismatch_rejected = false;
+        try {
+            static_cast<void>(mismatched.stringify());
+        } catch(const std::invalid_argument&) {
+            mismatch_rejected = true;
+        }
+        CHECK(mismatch_rejected);
+
+        CTAPPacket oversized{
+            .cid = CID_A,
+            .cmd = static_cast<uint8_t>(CTAPHID_CBOR | MASK),
+            .len = static_cast<uint16_t>(CTAPHID_MAX_PAYLOAD_SIZE + 1),
+            .payload = std::vector<uint8_t>(
+                CTAPHID_MAX_PAYLOAD_SIZE + 1,
+                0xA5
+            )
+        };
+        bool oversized_rejected = false;
+        try {
+            static_cast<void>(oversized.stringify());
+        } catch(const std::length_error&) {
+            oversized_rejected = true;
+        }
+        CHECK(oversized_rejected);
+    }
+
     using Test = std::pair<const char*, std::function<void()>>;
 }
 
@@ -541,7 +591,8 @@ int main() {
         {"timeout uses original deadline", test_timeout_uses_original_deadline},
         {"active request arbitration", test_active_request_arbitration},
         {"lengths, channels, and broadcast INIT", test_lengths_channels_and_broadcast_init},
-        {"maximum payload", test_maximum_payload}
+        {"maximum payload", test_maximum_payload},
+        {"outgoing payload bounds and lengths", test_outgoing_payload_bounds_and_lengths}
     };
 
     std::size_t failed = 0;

@@ -4,6 +4,7 @@ add_executable(frame_processor_tests
 
 target_link_libraries(frame_processor_tests PRIVATE
     ctaphid_frame_processor
+    ctaphid_packet
 )
 
 add_test(
@@ -32,6 +33,26 @@ target_link_libraries(request_parsing_tests PRIVATE
 add_test(
     NAME request_parsing
     COMMAND request_parsing_tests
+)
+
+add_executable(cbor_response_tests
+    cbor_response_test.cpp
+    ${PROJECT_SOURCE_DIR}/src/cbor_operations/cbor.cpp
+    ${PROJECT_SOURCE_DIR}/src/cbor_operations/cbor_utils.cpp
+)
+
+target_include_directories(cbor_response_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/src
+    ${TINYCBOR_INCLUDE_DIRS}
+)
+
+target_link_libraries(cbor_response_tests PRIVATE
+    ${TINYCBOR_LIBRARIES}
+)
+
+add_test(
+    NAME cbor_response
+    COMMAND cbor_response_tests
 )
 
 add_executable(uv_process_tests
