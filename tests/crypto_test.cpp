@@ -541,6 +541,19 @@ void test_failed_discoverable_replacement_preserves_old_credential() {
     CHECK(!reader.has(replacement.id));
 }
 
+void test_credential_lookup_for_rp_is_scoped() {
+    TemporaryStore temporary;
+    const std::vector<uint8_t> key(32, 0xB5);
+    const auto credential = make_credential(0x73, "example.com");
+
+    CredentialStore store(temporary.path(), key);
+    store.put(credential);
+
+    CHECK(store.has_for_rp(credential.id, "example.com"));
+    CHECK(!store.has_for_rp(credential.id, "other.example"));
+    CHECK(!store.has_for_rp(std::vector<uint8_t>(16, 0x74), "example.com"));
+}
+
 void test_repeated_save_replaces_database_durably() {
     TemporaryStore temporary;
     const std::vector<uint8_t> key(32, 0xA6);
@@ -912,6 +925,7 @@ int main() {
         test_discoverable_credential_replaces_same_rp_account();
         test_non_discoverable_credentials_do_not_replace_each_other();
         test_assertion_selection_respects_discoverability_and_rp();
+        test_credential_lookup_for_rp_is_scoped();
         test_failed_discoverable_replacement_preserves_old_credential();
         test_repeated_save_replaces_database_durably();
         test_failed_replacement_rolls_back_and_removes_temporary_file();
