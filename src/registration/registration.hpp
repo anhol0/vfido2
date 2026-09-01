@@ -2,13 +2,14 @@
 
 #include "uhid_report.hpp"
 #include "credentials/credential.hpp"
-#include "extensions.hpp"
+#include "error.hpp"
 
 class CredentialKeyProvider;
 class KeepaliveState;
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <optional>
 #include <stop_token>
 #include <string>
 #include <sys/types.h>
@@ -52,15 +53,13 @@ class CTAPMakeCredentialRequest {
         std::vector<uint8_t> clientDataHash;
         std::vector<PubKeyCredParam> publicKeyCredParams;
         std::vector<PublicKeyCredentialDescriptor> excludeList;
-        std::unordered_map<std::string, ExtensionValue> extensions;
         std::unordered_map<std::string, bool> options = {
             {"rk", false},
-            {"uv", false},
-            {"up", true}
+            {"uv", false}
         };
-        std::vector<uint8_t> pinAuth;
-        uint64_t pinProtocol = 0;
         bool parseRequest(std::vector<uint8_t> &payload);
+        [[nodiscard]] std::optional<CTAPError> validation_error()
+            const noexcept;
         std::vector<uint8_t> build_response(
             UHIDReport& r,
             std::stop_token stop,
@@ -78,6 +77,10 @@ class CTAPMakeCredentialRequest {
         void parse_options(CborValue &map);          // Optional
         void parse_pin_auth(CborValue &map);         // Optional
         void parse_pin_protocol(CborValue &map);     // Optional
+        bool extensions_requested = false;
+        bool up_option_present = false;
+        bool pin_auth_present = false;
+        bool pin_protocol_present = false;
         using ParseFn = void (CTAPMakeCredentialRequest::*)(CborValue &value);
         std::array<ParseFn, 10> dispatch_table = {
             nullptr,
@@ -98,12 +101,12 @@ class CTAPMakeCredentialRequest {
             publicKeyCredParams.clear();
             options = {
                 {"rk", false},
-                {"uv", false},
-                {"up", true}
+                {"uv", false}
             };
             excludeList.clear();
-            extensions.clear();
-            pinAuth.clear();
-            pinProtocol = 0;
+            extensions_requested = false;
+            up_option_present = false;
+            pin_auth_present = false;
+            pin_protocol_present = false;
         }
 };

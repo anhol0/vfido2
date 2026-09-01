@@ -30,6 +30,10 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(
         available_credentials.size()
     );
 
+    if(const auto error = validation_error()) {
+        return {static_cast<uint8_t>(*error)};
+    }
+
     userPresent = false;
     userVerified = false;
     const bool request_up = options.at("up");
@@ -76,9 +80,6 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(
         case AssertionInteraction::None:
             break;
     }
-
-    // We do not support extensions
-    // Like, at all
 
     // Collecting consent and checking auth (fingerpring or PIN) if needed
     if(number_of_credentials > 0) {

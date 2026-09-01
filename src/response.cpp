@@ -142,13 +142,6 @@ CTAPPacket handle_cbor(
                 gar.clear();
                 return make_cbor_error(request.cid, CTAPError::CTAP2_ERR_INVALID_CBOR);
             }
-            if(gar.has_rk_option()) {
-                gar.clear();
-                return make_cbor_error(
-                    request.cid,
-                    CTAPError::CTAP2_ERR_UNSUPPORTED_OPTION
-                );
-            }
             try {
                 payload = gar.build_response(
                     request, stop, store, key_provider, keepalive

@@ -1,7 +1,6 @@
 #include "registration/registration.hpp"
 
 #include <limits>
-#include <optional>
 #include <set>
 #include <string>
 #include <string_view>
@@ -16,7 +15,6 @@ namespace {
     constexpr std::size_t MAX_USER_ID_LENGTH = 64;
     constexpr std::size_t MAX_CREDENTIAL_ID_LENGTH = 7609;
     constexpr std::size_t MAX_EXTENSION_NAME_LENGTH = 64;
-    constexpr std::size_t MAX_EXTENSION_VALUE_LENGTH = 7609;
     constexpr std::size_t MAX_TRANSPORT_NAME_LENGTH = 32;
     constexpr std::size_t MAX_PIN_AUTH_LENGTH = 64;
 
@@ -30,37 +28,6 @@ namespace {
                 "duplicate " + std::string(context) + " member: " + key
             );
         }
-    }
-
-    std::optional<ExtensionValue> read_extension_value(CborValue& value) {
-        ExtensionValue extension;
-
-        if(cbor_value_is_boolean(&value)) {
-            extension.type = Type::Bool;
-            extension.value = cbor::read_bool(value);
-        } else if(cbor_value_is_integer(&value)) {
-            extension.type = Type::Int;
-            extension.value = cbor::read_int(value);
-        } else if(cbor_value_is_text_string(&value)) {
-            extension.type = Type::String;
-            extension.value = cbor::read_text(
-                value,
-                MAX_EXTENSION_VALUE_LENGTH
-            );
-        } else if(cbor_value_is_byte_string(&value)) {
-            extension.type = Type::Bytes;
-            extension.value = cbor::read_bytes(
-                value,
-                MAX_EXTENSION_VALUE_LENGTH
-            );
-        } else {
-            // This authenticator does not implement structured extensions yet.
-            // Unknown extension inputs are ignored, but still consumed.
-            cbor::skip(value);
-            return std::nullopt;
-        }
-
-        return extension;
     }
 
     PublicKeyCredentialDescriptor read_credential_descriptor(
@@ -226,9 +193,8 @@ void CTAPMakeCredentialRequest::parse_extensions(CborValue& value) {
             MAX_EXTENSION_NAME_LENGTH
         );
         require_unique(seen, name, "extension");
-
-        if(auto extension = read_extension_value(map))
-            extensions.emplace(name, std::move(*extension));
+        extensions_requested = true;
+        cbor::skip(map);
     });
 }
 
@@ -242,8 +208,11 @@ void CTAPMakeCredentialRequest::parse_options(CborValue& value) {
         );
         require_unique(seen, name, "option");
 
-        if(name == "rk" || name == "up" || name == "uv") {
+        if(name == "rk" || name == "uv") {
             options[name] = cbor::read_bool(map);
+        } else if(name == "up") {
+            (void)cbor::read_bool(map);
+            up_option_present = true;
         } else {
             cbor::skip(map);
         }
@@ -251,9 +220,11 @@ void CTAPMakeCredentialRequest::parse_options(CborValue& value) {
 }
 
 void CTAPMakeCredentialRequest::parse_pin_auth(CborValue& value) {
-    pinAuth = cbor::read_bytes(value, MAX_PIN_AUTH_LENGTH);
+    (void)cbor::read_bytes(value, MAX_PIN_AUTH_LENGTH);
+    pin_auth_present = true;
 }
 
 void CTAPMakeCredentialRequest::parse_pin_protocol(CborValue& value) {
-    pinProtocol = cbor::read_uint(value);
+    (void)cbor::read_uint(value);
+    pin_protocol_present = true;
 }

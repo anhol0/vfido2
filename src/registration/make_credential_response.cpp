@@ -71,6 +71,10 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(
         return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_UNSUPPORTED_ALGORITHM)};
     }
 
+    if(const auto error = validation_error()) {
+        return {static_cast<uint8_t>(*error)};
+    }
+
     // User Verification
     // Not cryptographically secure, but fine for now
     for(auto [name, option] : options) {
@@ -106,7 +110,6 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(
         }
     }
 
-    // End work with pinAuth parameter
     // Authentication Data is a blob:
     // rpIdHash (32 bytes)
     // flags (1 byte)
@@ -121,7 +124,7 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(
 
     // Flags
     uint8_t flags = 0x00;
-    flags |= options.at("up"); // Explicitly assert User Presence (UP = 1)
+    flags |= 0x01; // MakeCredential always requires user presence in CTAP 2.0.
     flags |= options.at("uv") << 2;
     flags |= 1 << 6; // Attested Credential Data
     int sc = 0;

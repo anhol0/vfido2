@@ -13,7 +13,7 @@
 
 #include "uhid_report.hpp"
 #include "credentials/credential.hpp"
-#include "extensions.hpp"
+#include "error.hpp"
 
 class CredentialKeyProvider;
 class KeepaliveState;
@@ -82,6 +82,8 @@ public:
         return rk_option_present;
     }
     bool parseRequest(std::vector<uint8_t> &payload);
+    [[nodiscard]] std::optional<CTAPError> validation_error()
+        const noexcept;
     std::vector<uint8_t> build_response(
         UHIDReport& r,
         std::stop_token stop,
@@ -99,14 +101,14 @@ public:
         rpId.clear();
         clientDataHash.resize(0);
         allowList.clear();
-        extensions.clear();
         options = {
             {"uv", false},
             {"up", true}
         };
         rk_option_present = false;
-        pinAuth.clear();
-        pinProtocol = 0;
+        extensions_requested = false;
+        pin_auth_present = false;
+        pin_protocol_present = false;
         userPresent = false;
         userVerified = false;
         sequence.clear();
@@ -115,14 +117,14 @@ private:
     std::string rpId;
     std::vector<uint8_t> clientDataHash;
     std::vector<PublicKeyCredentialDescriptor> allowList;
-    std::unordered_map<std::string, ExtensionValue> extensions;
     std::unordered_map<std::string, bool> options = {
         {"uv", false},
         {"up", true}
     };
     bool rk_option_present = false;
-    std::vector<uint8_t> pinAuth;
-    uint64_t pinProtocol = 0;
+    bool extensions_requested = false;
+    bool pin_auth_present = false;
+    bool pin_protocol_present = false;
     bool userPresent = false;
     bool userVerified = false;
     void parse_rp_id(CborValue &map);
