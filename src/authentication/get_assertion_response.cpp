@@ -154,9 +154,6 @@ std::vector<uint8_t> CTAPGetAssertionRequest::generate_single_credential_payload
 ) {
     // incrementing signCont for selected credential
     credential.signCount++;
-    // TODO:
-    // Sign the clientDataHash along with authData with the selected credential,
-    // using the structure specified in https://www.w3.org/TR/webauthn/#assertion-signature
 
     // Building AuthData
     // rpIdHash
@@ -166,7 +163,7 @@ std::vector<uint8_t> CTAPGetAssertionRequest::generate_single_credential_payload
         userPresent,
         userVerified
     );
-    const int sc = credential.signCount;
+    const uint32_t sc = credential.signCount;
 
     // Building Attested Credential data
     std::vector<uint8_t> authData;

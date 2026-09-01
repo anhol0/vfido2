@@ -30,14 +30,33 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(
     KeepaliveState& keepalive
 ) {
     cancellation_point(stop);
-    if(excludeList.size() > 0) {
+    if(!excludeList.empty()) {
         for(const auto &d : excludeList) {
             if(
                 d.type == "public-key" &&
-                store.has(d.id) &&
-                store.get_by_credId(d.id).rpId == rp.id
+                store.has_for_rp(d.id, rp.id)
             ) {
-                return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_CREDENTIAL_EXCLUDED)};
+                // Do not reveal that this RP already has a credential until
+                // the user-presence ceremony required by CTAP has completed.
+                cancellation_point(stop);
+                const bool user_present = collect_consent(
+                    "Confirm user presence to continue passkey registration?",
+                    stop,
+                    keepalive
+                );
+                cancellation_point(stop);
+                if(!user_present) {
+                    return {
+                        static_cast<uint8_t>(
+                            CTAPError::CTAP2_ERR_OPERATION_DENIED
+                        )
+                    };
+                }
+                return {
+                    static_cast<uint8_t>(
+                        CTAPError::CTAP2_ERR_CREDENTIAL_EXCLUDED
+                    )
+                };
             }
         }
     }

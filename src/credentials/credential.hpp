@@ -67,6 +67,10 @@ public:
 #endif
 
     [[nodiscard]] bool has(const std::vector<uint8_t>& credId) const;
+    [[nodiscard]] bool has_for_rp(
+        const std::vector<uint8_t>& cred_id,
+        std::string_view rp_id
+    ) const;
     void put(const StoredCredential& cred);
     [[nodiscard]] const StoredCredential& get_by_credId(
         const std::vector<uint8_t>& credId

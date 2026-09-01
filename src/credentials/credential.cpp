@@ -964,6 +964,14 @@ bool CredentialStore::has(const std::vector<uint8_t> &credId) const {
     return stored_.count(toHex(credId)) > 0;
 }
 
+bool CredentialStore::has_for_rp(
+    const std::vector<uint8_t>& cred_id,
+    std::string_view rp_id
+) const {
+    const auto credential = stored_.find(toHex(cred_id));
+    return credential != stored_.end() && credential->second.rpId == rp_id;
+}
+
 void CredentialStore::put(const StoredCredential &cred) {
     if(generation_ == std::numeric_limits<uint64_t>::max()) {
         throw std::overflow_error("Credential store generation overflow");
