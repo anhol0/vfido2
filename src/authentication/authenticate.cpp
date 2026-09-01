@@ -2,7 +2,6 @@
 
 #include <array>
 #include <cstdint>
-#include <iostream>
 #include <set>
 #include <utility>
 
@@ -97,9 +96,7 @@ bool CTAPGetAssertionRequest::parseRequest(
         cbor::require_complete(parser, root, "GetAssertion request");
 
         return true;
-    } catch(const cbor::Error& error) {
-        std::cerr << "Invalid authenticatorGetAssertion request: "
-                  << error.what() << '\n';
+    } catch(const cbor::Error&) {
         clear();
         return false;
     }

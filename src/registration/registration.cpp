@@ -2,7 +2,6 @@
 
 #include <array>
 #include <cstdint>
-#include <iostream>
 #include <set>
 
 #include "cbor_operations/cbor_utils.hpp"
@@ -49,9 +48,7 @@ bool CTAPMakeCredentialRequest::parseRequest(
         cbor::require_complete(parser, root, "MakeCredential request");
 
         return true;
-    } catch(const cbor::Error& error) {
-        std::cerr << "Invalid authenticatorMakeCredential request: "
-                  << error.what() << '\n';
+    } catch(const cbor::Error&) {
         clear();
         return false;
     }

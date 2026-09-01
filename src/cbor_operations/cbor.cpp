@@ -3,8 +3,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <format>
-#include <iostream>
 #include <nlohmann/detail/value_t.hpp>
 #include <stdexcept>
 #include <string>
@@ -102,19 +100,9 @@ std::vector<uint8_t> build_cose_key(
     cbor_encode_int(&map, 1);
 
     cbor_encode_int(&map, -2);
-    std::cout << "X-coordinate for public key: ";
-    for (auto byte : x_pad) {
-        std::cout << std::format("{:02x}", byte);
-    }
-    std::cout << std::endl;
     cbor_encode_byte_string(&map, x_pad.data(), x_pad.size());
 
     cbor_encode_int(&map, -3);
-    std::cout << "Y-coordinate for public key: ";
-    for (auto byte : y_pad) {
-        std::cout << std::format("{:02x}", byte);
-    }
-    std::cout << std::endl;
     cbor_encode_byte_string(&map, y_pad.data(), y_pad.size());
 
     e = cbor_encoder_close_container(&encoder, &map);

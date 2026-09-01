@@ -3,7 +3,6 @@
 #include <optional>
 #include <stop_token>
 #include <vector>
-#include <iostream>
 
 #include "authenticate.hpp"
 #include "cancellation.hpp"
@@ -35,11 +34,6 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(
     userVerified = false;
     const bool request_up = options.at("up");
     const bool request_uv = options.at("uv");
-#ifdef DEBUG
-    std::cout << "up: " << request_up << std::endl;
-    std::cout << "uv: " << request_uv << std::endl;
-#endif
-
     switch(assertion_interaction(request_up, request_uv)) {
         case AssertionInteraction::Verification: {
             const std::string username = get_user_name();
@@ -65,9 +59,6 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(
             break;
         }
         case AssertionInteraction::Presence: {
-#ifdef DEBUG
-            std::cout << "Authorize passkey usage" << std::endl;
-#endif
             cancellation_point(stop);
             const bool consent = collect_consent(
                 "Authorize passkey usage?",
@@ -92,7 +83,6 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(
     // Collecting consent and checking auth (fingerpring or PIN) if needed
     if(number_of_credentials > 0) {
         auto credential = available_credentials.front();
-        std::cout << "Credential found!\n";
         cancellation_point(stop);
         auto payload = generate_single_credential_payload(
             credential,
@@ -118,7 +108,6 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(
     }
 
     // If it falls through, no credentials were found and we return no credentials error
-    std::cout << "Credential not found!\n";
     return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_NO_CREDENTIALS)};
 }
 

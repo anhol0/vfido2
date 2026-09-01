@@ -32,6 +32,66 @@
 // Padding (zero everything until 64 bytes)
 
 namespace {
+#ifdef DEBUG
+    constexpr const char* ANSI_GREEN = "\x1b[32m";
+    constexpr const char* ANSI_BLUE = "\x1b[34m";
+    constexpr const char* ANSI_RESET = "\x1b[0m";
+
+    uint8_t ctaphid_command(uint8_t command) noexcept {
+        return command & static_cast<uint8_t>(~MASK);
+    }
+
+    const char* ctaphid_command_name(uint8_t command) noexcept {
+        switch(ctaphid_command(command)) {
+            case CTAPHID_PING: return "CTAPHID_PING";
+            case CTAPHID_MSG: return "CTAPHID_MSG";
+            case CTAPHID_LOCK: return "CTAPHID_LOCK";
+            case CTAPHID_INIT: return "CTAPHID_INIT";
+            case CTAPHID_WINK: return "CTAPHID_WINK";
+            case CTAPHID_CBOR: return "CTAPHID_CBOR";
+            case CTAPHID_CANCEL: return "CTAPHID_CANCEL";
+            case CTAPHID_KEEPALIVE: return "CTAPHID_KEEPALIVE";
+            case CTAPHID_ERROR: return "CTAPHID_ERROR";
+            default: return "CTAPHID_UNKNOWN";
+        }
+    }
+
+    const char* ctap_command_name(uint8_t command) noexcept {
+        switch(command) {
+            case 0x01: return "authenticatorMakeCredential";
+            case 0x02: return "authenticatorGetAssertion";
+            case 0x04: return "authenticatorGetInfo";
+            case 0x08: return "authenticatorGetNextAssertion";
+            default: return "unsupported CTAP command";
+        }
+    }
+
+    void log_received_packet(const UHIDReport& packet) {
+        if(ctaphid_command(packet.cmd) == CTAPHID_KEEPALIVE)
+            return;
+
+        std::clog << ANSI_GREEN << "Received "
+                  << ctaphid_command_name(packet.cmd);
+        if(
+            ctaphid_command(packet.cmd) == CTAPHID_CBOR &&
+            !packet.payload.empty()
+        ) {
+            std::clog << " (" << ctap_command_name(packet.payload.front())
+                      << ')';
+        }
+        std::clog << ANSI_RESET << '\n';
+    }
+
+    void log_sent_packet(const CTAPPacket& packet) {
+        if(ctaphid_command(packet.cmd) == CTAPHID_KEEPALIVE)
+            return;
+
+        std::clog << ANSI_BLUE << "Sent "
+                  << ctaphid_command_name(packet.cmd)
+                  << ANSI_RESET << '\n';
+    }
+#endif
+
     struct ActiveTask {
         uint64_t generation;
         uint32_t cid;
@@ -71,6 +131,9 @@ namespace {
              if (!device.send(frame))
                  throw std::runtime_error("Failed to send UHID response");
          }
+#ifdef DEBUG
+         log_sent_packet(packet);
+#endif
      }
 
     void send_keepalive(
@@ -178,15 +241,6 @@ void run(
             if (device.get_type() == UHID_OUTPUT) {
                 const std::vector<uint8_t> data = device.get_data();
 
-#ifdef DEBUG
-                // Log the data in debug configuration
-                printf("\x1b[1;31mGot data: \x1b[0m");
-                for(const uint8_t byte : data) {
-                    printf("%02x", byte);
-                }
-                std::cout << "\n";
-#endif
-
                 const std::optional<uint32_t> active_cid = active
                     ? std::optional<uint32_t>{active->cid}
                     : std::nullopt;
@@ -209,6 +263,9 @@ void run(
                 // Also parallel requests may arrive and senser will receive ERR_CHANNEL_BUSY error
                 if(auto* completed = std::get_if<UHIDReport>(&frame_result)) {
                     UHIDReport request = std::move(*completed);
+#ifdef DEBUG
+                    log_received_packet(request);
+#endif
 
                     if(request.cmd == CTAPHID_CANCEL) {
                         if(active &&
@@ -321,8 +378,7 @@ void run(
                                     key_provider,
                                     *keepalive
                                 );
-                            } catch (const OperationCancelled &e) {
-                                std::cout << "Exception: " <<  e.what() << std::endl;
+                            } catch (const OperationCancelled&) {
                                 result.packet = make_cbor_error(
                                     result.cid,
                                     CTAPError::CTAP2_ERR_KEEPALIVE_CANCEL
@@ -332,8 +388,7 @@ void run(
                                     result.cid,
                                     CTAPError::CTAP2_ERR_USER_ACTION_TIMEOUT
                                 );
-                            } catch (const std::exception &e) {
-                                std::cout << "Exception: " << e.what() << std::endl;
+                            } catch (const std::exception&) {
                                 result.packet = make_cbor_error(
                                     result.cid,
                                     CTAPError::CTAP1_ERR_OTHER

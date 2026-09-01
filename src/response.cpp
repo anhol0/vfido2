@@ -1,5 +1,4 @@
 #include <exception>
-#include <iostream>
 #include <cstdint>
 #include <vector>
 #include "response.hpp"
@@ -54,36 +53,7 @@ std::vector<std::vector<uint8_t>> CTAPPacket::stringify() {
             sequence++;
         }
     }
-#ifdef DEBUG
-    if(cmd != (CTAPHID_KEEPALIVE | MASK)) {
-        for(const auto &a : out) {
-            // Adding initialization packet to the sequence
-            printf("\x1b[1;32mOut data: \x1b[0m");
-            for(const auto &b : a) {
-                printf("%02x", b);
-            }
-            printf("\n");
-        }
-    }
-#endif
     return out;
-}
-
-void print_packet(std::string method, std::vector<uint8_t> &payload) {
-    std::cout << "\x1b[1;33m" << method << " payload size is: " << payload.size() << "\n";
-    std::cout << "Payload: ";
-    for(int i = 0; i < payload.size(); i++) {
-        printf("%02x", payload[i]);
-    }
-    std::cout << "\n\x1b[0m";
-}
-void print_response_payload(std::string method, std::vector<uint8_t> &payload) {
-    std::cout << "\x1b[1;33m" << method << " response payload size is: " << payload.size() << "\n";
-    std::cout << "Payload: ";
-    for(int i = 0; i < payload.size(); i++) {
-        printf("%02x", payload[i]);
-    }
-    std::cout << "\n\x1b[0m";
 }
 
 CTAPPacket handle_init(UHIDReport &request, uint32_t assigned_cid) {
@@ -156,14 +126,9 @@ CTAPPacket handle_cbor(
     else if(command == 0x01) {       // authenticatorMakeCredential
         payload.insert(payload.end(), request.payload.begin() + 1, request.payload.end());
 
-#ifdef DEBUG
-        // Debugging payload reassembly
-        print_packet("authenticatorMakeCredential", payload);
-#endif
         // Parsing the request
         CTAPMakeCredentialRequest mcr;
         if(!mcr.parseRequest(payload)) {
-            std::cerr << "There is a problem with the authenticatorMakeCredential request\n";
             return make_cbor_error(request.cid, CTAPError::CTAP2_ERR_INVALID_CBOR);
         }
 
@@ -176,29 +141,19 @@ CTAPPacket handle_cbor(
             throw;
         } catch (const UserActionTimedOut&) {
             throw;
-        } catch(std::exception &e) {
-            std::cerr << "There is a problem with the authenticatorMakeCredential request: " << e.what() << "\n";
+        } catch(const std::exception&) {
             return make_cbor_error(request.cid, CTAPError::CTAP1_ERR_OTHER);
         }
 
         // Returning error in case of single-byte payload
         // The byte is a CTAP error code
         if(payload.size() == 1) {
-            std::cout << "Build single-byte payload\n";
             return make_cbor_error(request.cid, static_cast<CTAPError>(payload[0]));
         }
     }
 
     else if(command == 0x02 || command == 0x08) {          // authenticatorGetAssertion
         payload.insert(payload.end(), request.payload.begin() + 1, request.payload.end());
-
-#ifdef DEBUG
-        if(command == 0x02) {
-            print_packet("authenticatorGetAssertion", payload);
-        } else if(command == 0x08) {
-            print_packet("authenticatorGetNextAssertion", payload);
-        }
-#endif
 
         if(command == 0x02) {
             // Since gar is static for caching purposes (see authenticatorGetNextAssertion),
@@ -207,7 +162,6 @@ CTAPPacket handle_cbor(
             // Parse the authenticatorGetAssertion request
             if(!gar.parseRequest(payload)) {
                 gar.clear();
-                std::cerr << "There is a problem with the authenticatorGetAssertion request\n";
                 return make_cbor_error(request.cid, CTAPError::CTAP2_ERR_INVALID_CBOR);
             }
             if(gar.has_rk_option()) {
@@ -221,14 +175,13 @@ CTAPPacket handle_cbor(
                 payload = gar.build_response(
                     request, stop, store, key_provider, keepalive
                 );
-            } catch (const OperationCancelled &e) {
+            } catch (const OperationCancelled&) {
                 gar.clear();
                 throw;
             } catch (const UserActionTimedOut&) {
                 gar.clear();
                 throw;
-            } catch (const std::exception& e) {
-                std::cerr << "Error building response: " << e.what() << "\n";
+            } catch (const std::exception&) {
                 gar.clear();
                 return make_cbor_error(request.cid, CTAPError::CTAP1_ERR_OTHER);
             }
@@ -252,8 +205,7 @@ CTAPPacket handle_cbor(
             } catch (const UserActionTimedOut&) {
                 gar.clear();
                 throw;
-            } catch (const std::exception &e) {
-                std::cerr << "Error building next response: " << e.what() << "\n";
+            } catch (const std::exception&) {
                 gar.clear();
                 return make_cbor_error(request.cid, CTAPError::CTAP1_ERR_OTHER);
             }
@@ -261,18 +213,8 @@ CTAPPacket handle_cbor(
 
         if(payload.size() == 1) {
             gar.clear();
-            std::cout << "Build single-byte payload\n";
             return make_cbor_error(request.cid, static_cast<CTAPError>(payload[0]));
         }
-
-#ifdef DEBUG
-        // Print output payload contents for debugging purposes
-        if(command == 0x02) {
-            print_response_payload("authenticatorGetAssertion", payload);
-        } else if(command == 0x08) {
-            print_response_payload("authenticatorGetNextAssertion", payload);
-        }
-#endif
     } else {
         return make_cbor_error(request.cid, CTAPError::CTAP1_ERR_INVALID_COMMAND);
     }

@@ -18,10 +18,6 @@
 #include "cryptography/tpm.hpp"
 #include "uv/src/auth.hpp"
 
-#ifdef DEBUG
-#include <iostream>
-#endif
-
 std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(
     UHIDReport& r,
     std::stop_token stop,
@@ -78,9 +74,6 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(
     // User Verification
     // Not cryptographically secure, but fine for now
     for(auto [name, option] : options) {
-#ifdef DEBUG
-            std::cout << name << ": " << option << std::endl;
-#endif
         if(name == "uv" && option == true) {
             const std::string username = get_user_name();
             const std::string procname = "vfido";
@@ -99,9 +92,6 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(
                 return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_UV_BLOCKED)};
             } else { break; }
         } else if (name == "uv" && option == false) {
-#ifdef DEBUG
-                std::cout << "Authorize passkey creation" << std::endl;
-#endif
             cancellation_point(stop);
             bool consent = collect_consent(
                 "Authorize passkey creation?",
