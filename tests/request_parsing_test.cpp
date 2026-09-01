@@ -156,6 +156,109 @@ namespace {
         CTAPMakeCredentialRequest request;
         CHECK(request.parseRequest(payload));
         CHECK(request.options.at("rk"));
+        CHECK(!request.validation_error().has_value());
+    }
+
+    void test_make_credential_rejects_up_option() {
+        for(const uint8_t value : {uint8_t{0xF4}, uint8_t{0xF5}}) {
+            auto payload = make_credential_request(32, true, 5);
+            append_unsigned(payload, 7);
+            append_map(payload, 1);
+            append_text(payload, "up");
+            payload.push_back(value);
+
+            CTAPMakeCredentialRequest request;
+            CHECK(request.parseRequest(payload));
+            CHECK(
+                request.validation_error() ==
+                CTAPError::CTAP2_ERR_INVALID_OPTION
+            );
+        }
+    }
+
+    void test_make_credential_rejects_extensions() {
+        for(const bool structured : {false, true}) {
+            auto payload = make_credential_request(32, true, 5);
+            append_unsigned(payload, 6);
+            append_map(payload, 1);
+            append_text(payload, "exampleExtension");
+            if(structured) {
+                append_array(payload, 1);
+                append_unsigned(payload, 1);
+            } else {
+                payload.push_back(0xF5); // true
+            }
+
+            CTAPMakeCredentialRequest request;
+            CHECK(request.parseRequest(payload));
+            CHECK(
+                request.validation_error() ==
+                CTAPError::CTAP2_ERR_UNSUPPORTED_EXTENSION
+            );
+        }
+
+        auto payload = make_credential_request(32, true, 5);
+        append_unsigned(payload, 6);
+        append_map(payload, 0);
+        CTAPMakeCredentialRequest request;
+        CHECK(request.parseRequest(payload));
+        CHECK(!request.validation_error().has_value());
+    }
+
+    void test_make_credential_rejects_pin_parameters() {
+        for(const uint8_t key : {uint8_t{8}, uint8_t{9}}) {
+            auto payload = make_credential_request(32, true, 5);
+            append_unsigned(payload, key);
+            if(key == 8) {
+                append_bytes(payload, 16, 0x24);
+            } else {
+                append_unsigned(payload, 1);
+            }
+
+            CTAPMakeCredentialRequest request;
+            CHECK(request.parseRequest(payload));
+            CHECK(
+                request.validation_error() ==
+                CTAPError::CTAP2_ERR_PIN_AUTH_INVALID
+            );
+        }
+
+        auto payload = make_credential_request(32, true, 6);
+        append_unsigned(payload, 8);
+        append_bytes(payload, 16, 0x24);
+        append_unsigned(payload, 9);
+        append_unsigned(payload, 1);
+        CTAPMakeCredentialRequest request;
+        CHECK(request.parseRequest(payload));
+        CHECK(
+            request.validation_error() ==
+            CTAPError::CTAP2_ERR_PIN_AUTH_INVALID
+        );
+    }
+
+    void test_unknown_options_are_ignored() {
+        auto make_payload = make_credential_request(32, true, 5);
+        append_unsigned(make_payload, 7);
+        append_map(make_payload, 1);
+        append_text(make_payload, "futureOption");
+        append_map(make_payload, 1);
+        append_text(make_payload, "value");
+        make_payload.push_back(0xF5); // true
+
+        CTAPMakeCredentialRequest make_request;
+        CHECK(make_request.parseRequest(make_payload));
+        CHECK(!make_request.validation_error().has_value());
+
+        auto assertion_payload = get_assertion_request(32, 3);
+        append_unsigned(assertion_payload, 5);
+        append_map(assertion_payload, 1);
+        append_text(assertion_payload, "futureOption");
+        append_array(assertion_payload, 1);
+        append_unsigned(assertion_payload, 1);
+
+        CTAPGetAssertionRequest assertion_request;
+        CHECK(assertion_request.parseRequest(assertion_payload));
+        CHECK(!assertion_request.validation_error().has_value());
     }
 
     void test_make_credential_rejects_bad_hash() {
@@ -194,7 +297,7 @@ namespace {
         CHECK(request.parseRequest(payload));
     }
 
-    void test_valid_get_assertion_with_optional_fields() {
+    void test_get_assertion_unsupported_field_priority() {
         auto payload = get_assertion_request(32, 7);
 
         append_unsigned(payload, 3);
@@ -228,6 +331,59 @@ namespace {
 
         CTAPGetAssertionRequest request;
         CHECK(request.parseRequest(payload));
+        CHECK(
+            request.validation_error() ==
+            CTAPError::CTAP2_ERR_PIN_AUTH_INVALID
+        );
+    }
+
+    void test_get_assertion_rejects_extensions() {
+        for(const bool structured : {false, true}) {
+            auto payload = get_assertion_request(32, 3);
+            append_unsigned(payload, 4);
+            append_map(payload, 1);
+            append_text(payload, "exampleExtension");
+            if(structured) {
+                append_map(payload, 1);
+                append_text(payload, "nested");
+                payload.push_back(0xF5); // true
+            } else {
+                payload.push_back(0xF5); // true
+            }
+
+            CTAPGetAssertionRequest request;
+            CHECK(request.parseRequest(payload));
+            CHECK(
+                request.validation_error() ==
+                CTAPError::CTAP2_ERR_UNSUPPORTED_EXTENSION
+            );
+        }
+
+        auto payload = get_assertion_request(32, 3);
+        append_unsigned(payload, 4);
+        append_map(payload, 0);
+        CTAPGetAssertionRequest request;
+        CHECK(request.parseRequest(payload));
+        CHECK(!request.validation_error().has_value());
+    }
+
+    void test_get_assertion_rejects_pin_parameters() {
+        for(const uint8_t key : {uint8_t{6}, uint8_t{7}}) {
+            auto payload = get_assertion_request(32, 3);
+            append_unsigned(payload, key);
+            if(key == 6) {
+                append_bytes(payload, 16, 0x24);
+            } else {
+                append_unsigned(payload, 1);
+            }
+
+            CTAPGetAssertionRequest request;
+            CHECK(request.parseRequest(payload));
+            CHECK(
+                request.validation_error() ==
+                CTAPError::CTAP2_ERR_PIN_AUTH_INVALID
+            );
+        }
     }
 
     void test_get_assertion_rejects_wrong_option_type() {
@@ -252,12 +408,45 @@ namespace {
             CTAPGetAssertionRequest request;
             CHECK(request.parseRequest(payload));
             CHECK(request.has_rk_option());
+            CHECK(
+                request.validation_error() ==
+                CTAPError::CTAP2_ERR_INVALID_OPTION
+            );
         }
 
         auto payload = get_assertion_request();
         CTAPGetAssertionRequest request;
         CHECK(request.parseRequest(payload));
         CHECK(!request.has_rk_option());
+        CHECK(!request.validation_error().has_value());
+    }
+
+    void test_unsupported_state_is_cleared() {
+        auto make_unsupported = make_credential_request(32, true, 5);
+        append_unsigned(make_unsupported, 7);
+        append_map(make_unsupported, 1);
+        append_text(make_unsupported, "up");
+        make_unsupported.push_back(0xF4); // false
+
+        CTAPMakeCredentialRequest make_request;
+        CHECK(make_request.parseRequest(make_unsupported));
+        CHECK(make_request.validation_error().has_value());
+
+        auto make_valid = make_credential_request();
+        CHECK(make_request.parseRequest(make_valid));
+        CHECK(!make_request.validation_error().has_value());
+
+        auto unsupported = get_assertion_request(32, 3);
+        append_unsigned(unsupported, 6);
+        append_bytes(unsupported, 16, 0x24);
+
+        CTAPGetAssertionRequest request;
+        CHECK(request.parseRequest(unsupported));
+        CHECK(request.validation_error().has_value());
+
+        auto valid = get_assertion_request();
+        CHECK(request.parseRequest(valid));
+        CHECK(!request.validation_error().has_value());
     }
 
     void test_get_assertion_rejects_wrong_rk_option_type() {
@@ -380,14 +569,21 @@ int main() {
     const std::vector<Test> tests{
         {"valid MakeCredential", test_valid_make_credential},
         {"MakeCredential rk option", test_make_credential_parses_rk_option},
+        {"MakeCredential up option", test_make_credential_rejects_up_option},
+        {"MakeCredential extensions", test_make_credential_rejects_extensions},
+        {"MakeCredential PIN parameters", test_make_credential_rejects_pin_parameters},
+        {"unknown options", test_unknown_options_are_ignored},
         {"MakeCredential bad hash", test_make_credential_rejects_bad_hash},
         {"MakeCredential missing nested field", test_make_credential_rejects_missing_nested_field},
         {"duplicate top-level parameter", test_duplicate_top_level_parameter_is_rejected},
         {"unknown parameter", test_unknown_parameter_is_consumed},
-        {"valid GetAssertion", test_valid_get_assertion_with_optional_fields},
+        {"GetAssertion unsupported field priority", test_get_assertion_unsupported_field_priority},
+        {"GetAssertion extensions", test_get_assertion_rejects_extensions},
+        {"GetAssertion PIN parameters", test_get_assertion_rejects_pin_parameters},
         {"GetAssertion wrong option type", test_get_assertion_rejects_wrong_option_type},
         {"GetAssertion rk option presence", test_get_assertion_tracks_rk_option_presence},
         {"GetAssertion wrong rk type", test_get_assertion_rejects_wrong_rk_option_type},
+        {"unsupported state reset", test_unsupported_state_is_cleared},
         {"GetAssertion empty credential ID", test_get_assertion_rejects_empty_credential_id},
         {"GetAssertion interaction and flags", test_assertion_interaction_and_flags},
         {"GetNextAssertion state", test_assertion_sequence_channel_timeout_and_exhaustion},
