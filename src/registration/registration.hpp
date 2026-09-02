@@ -77,7 +77,6 @@ class CTAPMakeCredentialRequest {
         void parse_options(CborValue &map);          // Optional
         void parse_pin_auth(CborValue &map);         // Optional
         void parse_pin_protocol(CborValue &map);     // Optional
-        bool extensions_requested = false;
         bool up_option_present = false;
         bool pin_auth_present = false;
         bool pin_protocol_present = false;
@@ -104,7 +103,6 @@ class CTAPMakeCredentialRequest {
                 {"uv", false}
             };
             excludeList.clear();
-            extensions_requested = false;
             up_option_present = false;
             pin_auth_present = false;
             pin_protocol_present = false;

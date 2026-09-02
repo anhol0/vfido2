@@ -10,8 +10,6 @@ std::optional<CTAPError>
 CTAPMakeCredentialRequest::validation_error() const noexcept {
     if(up_option_present)
         return CTAPError::CTAP2_ERR_INVALID_OPTION;
-    if(extensions_requested)
-        return CTAPError::CTAP2_ERR_UNSUPPORTED_EXTENSION;
     if(pin_auth_present || pin_protocol_present)
         return CTAPError::CTAP2_ERR_PIN_AUTH_INVALID;
     return std::nullopt;

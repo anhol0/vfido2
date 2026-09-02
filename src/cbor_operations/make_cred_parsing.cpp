@@ -193,7 +193,7 @@ void CTAPMakeCredentialRequest::parse_extensions(CborValue& value) {
             MAX_EXTENSION_NAME_LENGTH
         );
         require_unique(seen, name, "extension");
-        extensions_requested = true;
+        // CTAP2.0 requires unsupported extensions to be ignored.
         cbor::skip(map);
     });
 }

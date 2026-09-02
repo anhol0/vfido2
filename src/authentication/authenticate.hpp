@@ -106,7 +106,6 @@ public:
             {"up", true}
         };
         rk_option_present = false;
-        extensions_requested = false;
         pin_auth_present = false;
         pin_protocol_present = false;
         userPresent = false;
@@ -122,7 +121,6 @@ private:
         {"up", true}
     };
     bool rk_option_present = false;
-    bool extensions_requested = false;
     bool pin_auth_present = false;
     bool pin_protocol_present = false;
     bool userPresent = false;

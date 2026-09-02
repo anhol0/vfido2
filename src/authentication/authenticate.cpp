@@ -13,8 +13,6 @@ CTAPGetAssertionRequest::validation_error() const noexcept {
         return CTAPError::CTAP2_ERR_PIN_AUTH_INVALID;
     if(rk_option_present)
         return CTAPError::CTAP2_ERR_INVALID_OPTION;
-    if(extensions_requested)
-        return CTAPError::CTAP2_ERR_UNSUPPORTED_EXTENSION;
     return std::nullopt;
 }
 

@@ -154,10 +154,10 @@ std::vector<uint8_t> build_getinfo_response() {
         check(cbor_encoder_create_array(&map, &algorithms, 1));
         CborEncoder algorithm;
         check(cbor_encoder_create_map(&algorithms, &algorithm, 2));
-        check(cbor_encode_text_stringz(&algorithm, "type"));
-        check(cbor_encode_text_stringz(&algorithm, "public-key"));
         check(cbor_encode_text_stringz(&algorithm, "alg"));
         check(cbor_encode_int(&algorithm, -7));
+        check(cbor_encode_text_stringz(&algorithm, "type"));
+        check(cbor_encode_text_stringz(&algorithm, "public-key"));
         check(cbor_encoder_close_container_checked(&algorithms, &algorithm));
         check(cbor_encoder_close_container_checked(&map, &algorithms));
 
