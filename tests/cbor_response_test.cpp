@@ -107,11 +107,42 @@ void test_get_info_response() {
                 CHECK(options.at("rk"));
                 CHECK(options.at("up"));
                 CHECK(options.at("uv"));
+            } else if(key == 9) {
+                std::vector<std::string> transports;
+                cbor::read_array(map, [&](CborValue& array) {
+                    transports.push_back(cbor::read_text(array, 16));
+                });
+                CHECK(transports == std::vector<std::string>{"usb"});
+            } else if(key == 10) {
+                std::size_t algorithm_count = 0;
+                cbor::read_array(map, [&](CborValue& array) {
+                    ++algorithm_count;
+                    std::map<std::string, std::string> text_members;
+                    std::optional<int64_t> algorithm;
+                    cbor::read_map(array, [&](CborValue& algorithm_map) {
+                        auto name = cbor::read_text(algorithm_map, 16);
+                        if(name == "alg") {
+                            CHECK(!algorithm.has_value());
+                            algorithm = cbor::read_int(algorithm_map);
+                        } else {
+                            CHECK(text_members.emplace(
+                                std::move(name),
+                                cbor::read_text(algorithm_map, 32)
+                            ).second);
+                        }
+                    });
+                    CHECK(text_members.size() == 1);
+                    CHECK(text_members.at("type") == "public-key");
+                    CHECK(algorithm == -7);
+                });
+                CHECK(algorithm_count == 1);
+            } else if(key == 14) {
+                CHECK(cbor::read_uint(map) == firmware_version);
             } else {
                 cbor::skip(map);
             }
         });
-        CHECK(keys == std::set<uint64_t>({1, 3, 4}));
+        CHECK(keys == std::set<uint64_t>({1, 3, 4, 9, 10, 14}));
     });
 }
 
