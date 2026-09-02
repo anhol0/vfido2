@@ -176,7 +176,7 @@ namespace {
         }
     }
 
-    void test_make_credential_rejects_extensions() {
+    void test_make_credential_ignores_unsupported_extensions() {
         for(const bool structured : {false, true}) {
             auto payload = make_credential_request(32, true, 5);
             append_unsigned(payload, 6);
@@ -191,10 +191,7 @@ namespace {
 
             CTAPMakeCredentialRequest request;
             CHECK(request.parseRequest(payload));
-            CHECK(
-                request.validation_error() ==
-                CTAPError::CTAP2_ERR_UNSUPPORTED_EXTENSION
-            );
+            CHECK(!request.validation_error().has_value());
         }
 
         auto payload = make_credential_request(32, true, 5);
@@ -203,6 +200,26 @@ namespace {
         CTAPMakeCredentialRequest request;
         CHECK(request.parseRequest(payload));
         CHECK(!request.validation_error().has_value());
+    }
+
+    void test_make_credential_rejects_malformed_extensions() {
+        auto duplicate = make_credential_request(32, true, 5);
+        append_unsigned(duplicate, 6);
+        append_map(duplicate, 2);
+        append_text(duplicate, "duplicate");
+        duplicate.push_back(0xF5); // true
+        append_text(duplicate, "duplicate");
+        duplicate.push_back(0xF4); // false
+
+        CTAPMakeCredentialRequest request;
+        CHECK(!request.parseRequest(duplicate));
+
+        auto non_text_key = make_credential_request(32, true, 5);
+        append_unsigned(non_text_key, 6);
+        append_map(non_text_key, 1);
+        append_unsigned(non_text_key, 1);
+        non_text_key.push_back(0xF5); // true
+        CHECK(!request.parseRequest(non_text_key));
     }
 
     void test_make_credential_rejects_pin_parameters() {
@@ -337,7 +354,7 @@ namespace {
         );
     }
 
-    void test_get_assertion_rejects_extensions() {
+    void test_get_assertion_ignores_unsupported_extensions() {
         for(const bool structured : {false, true}) {
             auto payload = get_assertion_request(32, 3);
             append_unsigned(payload, 4);
@@ -353,10 +370,7 @@ namespace {
 
             CTAPGetAssertionRequest request;
             CHECK(request.parseRequest(payload));
-            CHECK(
-                request.validation_error() ==
-                CTAPError::CTAP2_ERR_UNSUPPORTED_EXTENSION
-            );
+            CHECK(!request.validation_error().has_value());
         }
 
         auto payload = get_assertion_request(32, 3);
@@ -365,6 +379,26 @@ namespace {
         CTAPGetAssertionRequest request;
         CHECK(request.parseRequest(payload));
         CHECK(!request.validation_error().has_value());
+    }
+
+    void test_get_assertion_rejects_malformed_extensions() {
+        auto duplicate = get_assertion_request(32, 3);
+        append_unsigned(duplicate, 4);
+        append_map(duplicate, 2);
+        append_text(duplicate, "duplicate");
+        duplicate.push_back(0xF5); // true
+        append_text(duplicate, "duplicate");
+        duplicate.push_back(0xF4); // false
+
+        CTAPGetAssertionRequest request;
+        CHECK(!request.parseRequest(duplicate));
+
+        auto non_text_key = get_assertion_request(32, 3);
+        append_unsigned(non_text_key, 4);
+        append_map(non_text_key, 1);
+        append_unsigned(non_text_key, 1);
+        non_text_key.push_back(0xF5); // true
+        CHECK(!request.parseRequest(non_text_key));
     }
 
     void test_get_assertion_rejects_pin_parameters() {
@@ -570,7 +604,8 @@ int main() {
         {"valid MakeCredential", test_valid_make_credential},
         {"MakeCredential rk option", test_make_credential_parses_rk_option},
         {"MakeCredential up option", test_make_credential_rejects_up_option},
-        {"MakeCredential extensions", test_make_credential_rejects_extensions},
+        {"MakeCredential unsupported extensions", test_make_credential_ignores_unsupported_extensions},
+        {"MakeCredential malformed extensions", test_make_credential_rejects_malformed_extensions},
         {"MakeCredential PIN parameters", test_make_credential_rejects_pin_parameters},
         {"unknown options", test_unknown_options_are_ignored},
         {"MakeCredential bad hash", test_make_credential_rejects_bad_hash},
@@ -578,7 +613,8 @@ int main() {
         {"duplicate top-level parameter", test_duplicate_top_level_parameter_is_rejected},
         {"unknown parameter", test_unknown_parameter_is_consumed},
         {"GetAssertion unsupported field priority", test_get_assertion_unsupported_field_priority},
-        {"GetAssertion extensions", test_get_assertion_rejects_extensions},
+        {"GetAssertion unsupported extensions", test_get_assertion_ignores_unsupported_extensions},
+        {"GetAssertion malformed extensions", test_get_assertion_rejects_malformed_extensions},
         {"GetAssertion PIN parameters", test_get_assertion_rejects_pin_parameters},
         {"GetAssertion wrong option type", test_get_assertion_rejects_wrong_option_type},
         {"GetAssertion rk option presence", test_get_assertion_tracks_rk_option_presence},

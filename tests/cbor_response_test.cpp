@@ -119,8 +119,10 @@ void test_get_info_response() {
                     ++algorithm_count;
                     std::map<std::string, std::string> text_members;
                     std::optional<int64_t> algorithm;
+                    std::vector<std::string> member_order;
                     cbor::read_map(array, [&](CborValue& algorithm_map) {
                         auto name = cbor::read_text(algorithm_map, 16);
+                        member_order.push_back(name);
                         if(name == "alg") {
                             CHECK(!algorithm.has_value());
                             algorithm = cbor::read_int(algorithm_map);
@@ -131,6 +133,8 @@ void test_get_info_response() {
                             ).second);
                         }
                     });
+                    CHECK(member_order ==
+                        std::vector<std::string>({"alg", "type"}));
                     CHECK(text_members.size() == 1);
                     CHECK(text_members.at("type") == "public-key");
                     CHECK(algorithm == -7);
