@@ -182,14 +182,15 @@ std::vector<uint8_t> build_cose_key(
 }
 
 std::vector<uint8_t> build_authenticatorMakeCredential_response(
-    std::span<const uint8_t> auth_data
+    std::span<const uint8_t> auth_data,
+    std::span<const uint8_t> signData
 ) {
     return encode_cbor(true, [&](CborEncoder& encoder) {
         CborEncoder map;
         check(cbor_encoder_create_map(&encoder, &map, 3));
 
         check(cbor_encode_uint(&map, 1));
-        check(cbor_encode_text_stringz(&map, "none"));
+        check(cbor_encode_text_stringz(&map, "packed"));
 
         check(cbor_encode_uint(&map, 2));
         check(cbor_encode_byte_string(
@@ -203,8 +204,27 @@ std::vector<uint8_t> build_authenticatorMakeCredential_response(
         check(cbor_encoder_create_map(
             &map,
             &attestation_statement,
-            0
+            2
         ));
+        check(cbor_encode_text_stringz(
+            &attestation_statement,
+            "alg"
+        ));
+        check(cbor_encode_int(
+            &attestation_statement,
+            -7
+        ));
+
+        check(cbor_encode_text_stringz(
+            &attestation_statement,
+            "sig"
+        ));
+        check(cbor_encode_byte_string(
+            &attestation_statement,
+            signData.data(),
+            signData.size()
+        ));
+
         check(cbor_encoder_close_container_checked(
             &map,
             &attestation_statement

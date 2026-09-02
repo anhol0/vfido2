@@ -28,7 +28,8 @@ std::vector<uint8_t> build_cose_key(
     std::span<const uint8_t> y
 );
 std::vector<uint8_t> build_authenticatorMakeCredential_response(
-    std::span<const uint8_t> auth_data
+    std::span<const uint8_t> auth_data,
+    std::span<const uint8_t> signData
 );
 std::vector<uint8_t> build_authenticatorGetAssertion_response(
     std::span<const uint8_t> auth_data,

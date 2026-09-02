@@ -154,6 +154,8 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(
     // Generating the keypair and storing the credential
     cancellation_point(stop);
     CredentialKey key = key_provider.create(credId);
+    cancellation_point(stop);
+
     StoredCredential credential;
     credential.id = credId;
     credential.rpId = rp.id;
@@ -171,7 +173,13 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(
     auto cose_map = build_cose_key(extracted_coords[0], extracted_coords[1]);
     authData.insert(authData.end(), cose_map.begin(), cose_map.end());
 
-    std::vector<uint8_t> payload = build_authenticatorMakeCredential_response(authData);
+    // Creating signData and signing it with private key
+    std::vector<uint8_t> signDataRaw(authData);
+    signDataRaw.insert(signDataRaw.end(), clientDataHash.begin(), clientDataHash.end());
+    auto signDataHash = sha256(signDataRaw);
+    auto signData = key_provider.sign(credId, signDataHash, key.publicBlob, key.privateBlob);
+
+    std::vector<uint8_t> payload = build_authenticatorMakeCredential_response(authData, signData);
 
     cancellation_point(stop);
 
