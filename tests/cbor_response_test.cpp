@@ -149,8 +149,11 @@ void test_cose_key() {
 
 void test_make_credential_response() {
     const std::vector<uint8_t> auth_data{0x10, 0x20, 0x30};
+    const std::vector<uint8_t> signature{
+        0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x02
+    };
     const auto response =
-        build_authenticatorMakeCredential_response(auth_data);
+        build_authenticatorMakeCredential_response(auth_data, signature);
 
     decode_response(response, [&](CborValue& root) {
         std::set<uint64_t> keys;
@@ -158,17 +161,26 @@ void test_make_credential_response() {
             const auto key = cbor::read_uint(map);
             CHECK(keys.insert(key).second);
             if(key == 1) {
-                CHECK(cbor::read_text(map, 16) == "none");
+                CHECK(cbor::read_text(map, 16) == "packed");
             } else if(key == 2) {
                 CHECK(cbor::read_bytes(map, 64) == auth_data);
             } else if(key == 3) {
-                std::size_t members = 0;
+                std::set<std::string> statement_keys;
                 cbor::read_map(map, [&](CborValue& statement) {
-                    ++members;
-                    cbor::skip(statement);
-                    cbor::skip(statement);
+                    const auto name = cbor::read_text(statement, 16);
+                    CHECK(statement_keys.insert(name).second);
+                    if(name == "alg") {
+                        CHECK(cbor::read_int(statement) == -7);
+                    } else if(name == "sig") {
+                        CHECK(cbor::read_bytes(statement, 128) == signature);
+                    } else {
+                        cbor::skip(statement);
+                    }
                 });
-                CHECK(members == 0);
+                CHECK(
+                    statement_keys ==
+                    std::set<std::string>({"alg", "sig"})
+                );
             } else {
                 cbor::skip(map);
             }
@@ -321,7 +333,8 @@ void test_encoding_failures_are_typed() {
     bool resource_failure = false;
     try {
         static_cast<void>(build_authenticatorMakeCredential_response(
-            std::vector<uint8_t>(CTAPHID_MAX_PAYLOAD_SIZE, 0xA5)
+            std::vector<uint8_t>(CTAPHID_MAX_PAYLOAD_SIZE, 0xA5),
+            std::vector<uint8_t>{0x30}
         ));
     } catch(const CborEncodingError& error) {
         resource_failure =
