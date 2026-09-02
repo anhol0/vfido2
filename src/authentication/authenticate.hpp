@@ -47,6 +47,13 @@ enum class AssertionInteraction {
     );
 }
 
+[[nodiscard]] constexpr bool has_assertion_continuations(
+    bool allow_list_empty,
+    std::size_t credential_count
+) noexcept {
+    return allow_list_empty && credential_count > 1;
+}
+
 class AssertionSequence {
 public:
     using Clock = std::chrono::steady_clock;

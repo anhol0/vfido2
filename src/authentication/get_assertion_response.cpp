@@ -38,6 +38,10 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(
     userVerified = false;
     const bool request_up = options.at("up");
     const bool request_uv = options.at("uv");
+    const bool has_continuations = has_assertion_continuations(
+        allowList.empty(),
+        available_credentials.size()
+    );
     switch(assertion_interaction(request_up, request_uv)) {
         case AssertionInteraction::Verification: {
             const std::string username = get_user_name();
@@ -87,7 +91,7 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(
         cancellation_point(stop);
         auto payload = generate_single_credential_payload(
             credential,
-            allowList.empty() && number_of_credentials > 1
+            has_continuations
                 ? std::optional<uint32_t>(number_of_credentials)
                 : std::nullopt,
             stop,
@@ -96,7 +100,7 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(
         );
         // Do not expose continuation state until authorization, signing, and
         // the durable signature-counter update have all succeeded.
-        if(number_of_credentials > 1) {
+        if(has_continuations) {
             sequence.begin(
                 r.cid,
                 {

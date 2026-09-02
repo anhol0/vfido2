@@ -541,6 +541,11 @@ namespace {
         CHECK(assertion_authenticator_flags(true, false) == 0x01);
         CHECK(assertion_authenticator_flags(false, true) == 0x04);
         CHECK(assertion_authenticator_flags(true, true) == 0x05);
+
+        CHECK(!has_assertion_continuations(true, 0));
+        CHECK(!has_assertion_continuations(true, 1));
+        CHECK(has_assertion_continuations(true, 2));
+        CHECK(!has_assertion_continuations(false, 2));
     }
 
     void test_assertion_sequence_channel_timeout_and_exhaustion() {
