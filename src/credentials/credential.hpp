@@ -19,6 +19,7 @@ struct PublicKeyCredentialDescriptor {
 
 struct StoredCredential {
     std::vector<uint8_t> id;
+    uint32_t ownerUid = 0;
     std::string rpId;
     std::vector<uint8_t> userId;
     std::string userName;
@@ -66,20 +67,29 @@ public:
     void clear();
 #endif
 
-    [[nodiscard]] bool has(const std::vector<uint8_t>& credId) const;
+    [[nodiscard]] bool has(
+        const std::vector<uint8_t>& cred_id,
+        uint32_t owner_uid
+    ) const;
     [[nodiscard]] bool has_for_rp(
         const std::vector<uint8_t>& cred_id,
-        std::string_view rp_id
+        std::string_view rp_id,
+        uint32_t owner_uid
     ) const;
-    void put(const StoredCredential& cred);
+    void put(const StoredCredential& cred, uint32_t owner_uid);
     [[nodiscard]] const StoredCredential& get_by_credId(
-        const std::vector<uint8_t>& credId
+        const std::vector<uint8_t>& cred_id,
+        uint32_t owner_uid
     ) const;
     [[nodiscard]] std::vector<StoredCredential> find_for_assertion(
         std::string_view rp_id,
-        std::span<const PublicKeyCredentialDescriptor> allow_list
+        std::span<const PublicKeyCredentialDescriptor> allow_list,
+        uint32_t owner_uid
     ) const;
-    void incrementSigCount(const std::vector<uint8_t>& credId);
+    void incrementSigCount(
+        const std::vector<uint8_t>& cred_id,
+        uint32_t owner_uid
+    );
     [[nodiscard]] std::string toHex(const std::vector<uint8_t>& v) const;
     [[nodiscard]] std::vector<uint8_t> fromHex(const std::string& s) const;
 

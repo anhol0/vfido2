@@ -6,12 +6,16 @@
 #include "keepalive.hpp"
 
 #include <chrono>
+#include <cerrno>
+#include <limits>
+#include <pwd.h>
 #include <security/_pam_types.h>
 #include <stdexcept>
 #include <string>
 #include <system_error>
 #include <termios.h>
 #include <unistd.h>
+#include <vector>
 
 namespace {
 
@@ -100,9 +104,39 @@ bool collect_consent(
     }
 }
 
-std::string get_user_name() {
+LocalUserIdentity get_local_user_identity() {
     const char* name = getlogin();
     if(name == nullptr)
         throw std::runtime_error("Unable to get current user name");
-    return name;
+
+    const std::string username(name);
+    long buffer_size = sysconf(_SC_GETPW_R_SIZE_MAX);
+    if(buffer_size < 0)
+        buffer_size = 16384;
+
+    std::vector<char> buffer(static_cast<std::size_t>(buffer_size));
+    passwd account{};
+    passwd* result = nullptr;
+    const int rc = getpwnam_r(
+        username.c_str(),
+        &account,
+        buffer.data(),
+        buffer.size(),
+        &result
+    );
+    if(rc != 0)
+        throw std::system_error(rc, std::generic_category(), "getpwnam_r");
+    if(result == nullptr)
+        throw std::runtime_error("Unable to resolve current user name");
+    if(
+        static_cast<uintmax_t>(account.pw_uid) >
+        std::numeric_limits<uint32_t>::max()
+    ) {
+        throw std::runtime_error("Current user UID is out of range");
+    }
+
+    return LocalUserIdentity{
+        .uid = static_cast<uint32_t>(account.pw_uid),
+        .name = username
+    };
 }

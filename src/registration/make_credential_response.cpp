@@ -26,11 +26,12 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(
     KeepaliveState& keepalive
 ) {
     cancellation_point(stop);
+    const LocalUserIdentity local_user = get_local_user_identity();
     if(!excludeList.empty()) {
         for(const auto &d : excludeList) {
             if(
                 d.type == "public-key" &&
-                store.has_for_rp(d.id, rp.id)
+                store.has_for_rp(d.id, rp.id, local_user.uid)
             ) {
                 // Do not reveal that this RP already has a credential until
                 // the user-presence ceremony required by CTAP has completed.
@@ -79,7 +80,6 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(
     // Not cryptographically secure, but fine for now
     for(auto [name, option] : options) {
         if(name == "uv" && option == true) {
-            const std::string username = get_user_name();
             const std::string procname = "vfido";
 
 #ifdef DEBUG
@@ -89,7 +89,7 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(
 #endif
 
             int rc = authenticate_user(
-                username, procname, confdir, stop, keepalive
+                local_user.name, procname, confdir, stop, keepalive
             );
             cancellation_point(stop);
             if(rc != 0) {
@@ -186,7 +186,7 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(
     // Do not save dummy credentials to the store if it's a make.me.blink ping
     if (rp.id != "make.me.blink" && rp.id != ".dummy") {
         cancellation_point(stop);
-        store.put(credential);
+        store.put(credential, local_user.uid);
     }
     return payload;
 }

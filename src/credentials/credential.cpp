@@ -798,6 +798,7 @@ void CredentialStore::save_storage(const Storage& storage) {
         const auto& cred = item.second;
         j.push_back({
             {"id", toHex(cred.id)},
+            {"ownerUid", cred.ownerUid},
             {"discoverable", cred.discoverable},
             {"creationOrder", cred.creationOrder},
             {"rpId", cred.rpId},
@@ -847,6 +848,16 @@ CredentialStore::Storage CredentialStore::parse_storage(
         StoredCredential cred;
         cred.id = fromHex(entry.at("id").get<std::string>());
         if(cred.id.size() < 16) throw std::runtime_error("Invalid Credential ID");
+
+        const auto& owner_uid = entry.at("ownerUid");
+        if(!owner_uid.is_number_unsigned()) {
+            throw std::runtime_error("Invalid credential owner UID type");
+        }
+        const auto owner_uid_value = owner_uid.get<uint64_t>();
+        if(owner_uid_value > std::numeric_limits<uint32_t>::max()) {
+            throw std::runtime_error("Credential owner UID is out of range");
+        }
+        cred.ownerUid = static_cast<uint32_t>(owner_uid_value);
 
         const auto& discoverable = entry.at("discoverable");
         if(!discoverable.is_boolean()) {
@@ -960,24 +971,36 @@ void CredentialStore::clear() {
 
 // Public API
 
-bool CredentialStore::has(const std::vector<uint8_t> &credId) const {
-    return stored_.count(toHex(credId)) > 0;
+bool CredentialStore::has(
+    const std::vector<uint8_t>& cred_id,
+    uint32_t owner_uid
+) const {
+    const auto credential = stored_.find(toHex(cred_id));
+    return credential != stored_.end() &&
+        credential->second.ownerUid == owner_uid;
 }
 
 bool CredentialStore::has_for_rp(
     const std::vector<uint8_t>& cred_id,
-    std::string_view rp_id
+    std::string_view rp_id,
+    uint32_t owner_uid
 ) const {
     const auto credential = stored_.find(toHex(cred_id));
-    return credential != stored_.end() && credential->second.rpId == rp_id;
+    return credential != stored_.end() &&
+        credential->second.ownerUid == owner_uid &&
+        credential->second.rpId == rp_id;
 }
 
-void CredentialStore::put(const StoredCredential &cred) {
+void CredentialStore::put(
+    const StoredCredential& cred,
+    uint32_t owner_uid
+) {
     if(generation_ == std::numeric_limits<uint64_t>::max()) {
         throw std::overflow_error("Credential store generation overflow");
     }
 
     auto stored_credential = cred;
+    stored_credential.ownerUid = owner_uid;
     stored_credential.creationOrder = generation_ + 1;
     validate_credential(stored_credential);
     const auto credential_id = toHex(stored_credential.id);
@@ -990,6 +1013,7 @@ void CredentialStore::put(const StoredCredential &cred) {
         std::erase_if(updated, [&](const auto& item) {
             const auto& existing = item.second;
             return existing.discoverable &&
+                existing.ownerUid == stored_credential.ownerUid &&
                 existing.rpId == stored_credential.rpId &&
                 existing.userId == stored_credential.userId;
         });
@@ -1003,13 +1027,24 @@ void CredentialStore::put(const StoredCredential &cred) {
 }
 
 
-const StoredCredential& CredentialStore::get_by_credId(const std::vector<uint8_t> &credId) const {
-    return stored_.at(toHex(credId));
+const StoredCredential& CredentialStore::get_by_credId(
+    const std::vector<uint8_t>& cred_id,
+    uint32_t owner_uid
+) const {
+    const auto credential = stored_.find(toHex(cred_id));
+    if(
+        credential == stored_.end() ||
+        credential->second.ownerUid != owner_uid
+    ) {
+        throw std::out_of_range("Credential ID was not found for local user");
+    }
+    return credential->second;
 }
 
 std::vector<StoredCredential> CredentialStore::find_for_assertion(
     std::string_view rp_id,
-    std::span<const PublicKeyCredentialDescriptor> allow_list
+    std::span<const PublicKeyCredentialDescriptor> allow_list,
+    uint32_t owner_uid
 ) const {
     std::vector<StoredCredential> matches;
 
@@ -1029,6 +1064,7 @@ std::vector<StoredCredential> CredentialStore::find_for_assertion(
             const auto credential = stored_.find(credential_id);
             if(
                 credential != stored_.end() &&
+                credential->second.ownerUid == owner_uid &&
                 credential->second.rpId == rp_id
             ) {
                 matches.push_back(credential->second);
@@ -1039,7 +1075,11 @@ std::vector<StoredCredential> CredentialStore::find_for_assertion(
 
     for(const auto& [credential_id, credential] : stored_) {
         (void)credential_id;
-        if(credential.discoverable && credential.rpId == rp_id) {
+        if(
+            credential.ownerUid == owner_uid &&
+            credential.discoverable &&
+            credential.rpId == rp_id
+        ) {
             matches.push_back(credential);
         }
     }
@@ -1052,11 +1092,17 @@ std::vector<StoredCredential> CredentialStore::find_for_assertion(
     return matches;
 }
 
-void CredentialStore::incrementSigCount(const std::vector<uint8_t> &credId) {
-    const auto credential_id = toHex(credId);
+void CredentialStore::incrementSigCount(
+    const std::vector<uint8_t>& cred_id,
+    uint32_t owner_uid
+) {
+    const auto credential_id = toHex(cred_id);
     const auto current = stored_.find(credential_id);
-    if(current == stored_.end()) {
-        throw std::out_of_range("Credential ID was not found");
+    if(
+        current == stored_.end() ||
+        current->second.ownerUid != owner_uid
+    ) {
+        throw std::out_of_range("Credential ID was not found for local user");
     }
     if(current->second.signCount == std::numeric_limits<uint32_t>::max()) {
         throw std::overflow_error("Signature counter cannot be incremented");

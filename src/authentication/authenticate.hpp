@@ -60,11 +60,13 @@ public:
 
     void begin(
         uint32_t origin_cid,
+        uint32_t owner_uid,
         std::vector<StoredCredential> remaining_credentials,
         Clock::time_point now = Clock::now()
     );
     [[nodiscard]] std::optional<StoredCredential> next(
         uint32_t cid,
+        uint32_t owner_uid,
         Clock::time_point now = Clock::now()
     );
     void clear() noexcept;
@@ -77,6 +79,7 @@ private:
     std::vector<StoredCredential> credentials_;
     std::size_t index_ = 0;
     uint32_t originCid_ = 0;
+    uint32_t ownerUid_ = 0;
     Clock::time_point lastUse_{};
 };
 
@@ -143,6 +146,7 @@ private:
     AssertionSequence sequence;
     std::vector<uint8_t> generate_single_credential_payload (
         StoredCredential &credential,
+        uint32_t owner_uid,
         std::optional<uint32_t> number_of_credentials,
         std::stop_token stop,
         CredentialStore& store,

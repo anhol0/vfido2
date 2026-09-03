@@ -1,7 +1,9 @@
 #include "authentication/authenticate.hpp"
 
 #include <array>
+#include <algorithm>
 #include <cstdint>
+#include <stdexcept>
 #include <set>
 #include <utility>
 
@@ -18,6 +20,7 @@ CTAPGetAssertionRequest::validation_error() const noexcept {
 
 void AssertionSequence::begin(
     uint32_t origin_cid,
+    uint32_t owner_uid,
     std::vector<StoredCredential> remaining_credentials,
     Clock::time_point now
 ) {
@@ -25,16 +28,29 @@ void AssertionSequence::begin(
     if(origin_cid == 0 || remaining_credentials.empty()) {
         return;
     }
+    if(std::ranges::any_of(remaining_credentials, [owner_uid](const auto& credential) {
+        return credential.ownerUid != owner_uid;
+    })) {
+        throw std::invalid_argument(
+            "Assertion sequence contains a credential owned by another user"
+        );
+    }
 
     originCid_ = origin_cid;
+    ownerUid_ = owner_uid;
     credentials_ = std::move(remaining_credentials);
     lastUse_ = now;
 }
 
 std::optional<StoredCredential> AssertionSequence::next(
     uint32_t cid,
+    uint32_t owner_uid,
     Clock::time_point now
 ) {
+    if(originCid_ != 0 && owner_uid != ownerUid_) {
+        clear();
+        return std::nullopt;
+    }
     if(originCid_ == 0 || cid != originCid_) {
         return std::nullopt;
     }
@@ -56,6 +72,7 @@ void AssertionSequence::clear() noexcept {
     credentials_.clear();
     index_ = 0;
     originCid_ = 0;
+    ownerUid_ = 0;
     lastUse_ = {};
 }
 
