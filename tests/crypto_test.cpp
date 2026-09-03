@@ -25,6 +25,9 @@
 
 namespace {
 
+constexpr uint32_t TEST_OWNER_UID = 1000;
+constexpr uint32_t OTHER_OWNER_UID = 1001;
+
 void check(bool condition, const char* expression, int line) {
     if(!condition) {
         throw std::runtime_error(
@@ -140,10 +143,12 @@ StoredCredential make_credential(
     uint8_t id_byte = 0x42,
     std::string rp_id = "example.com",
     std::vector<uint8_t> user_id = {0x10, 0x11},
-    bool discoverable = true
+    bool discoverable = true,
+    uint32_t owner_uid = TEST_OWNER_UID
 ) {
     return StoredCredential{
         .id = std::vector<uint8_t>(16, id_byte),
+        .ownerUid = owner_uid,
         .rpId = std::move(rp_id),
         .userId = std::move(user_id),
         .userName = "alice",
@@ -284,6 +289,7 @@ void write_file(
 nlohmann::json valid_storage_entry() {
     return {
         {"id", std::string(32, 'A')},
+        {"ownerUid", TEST_OWNER_UID},
         {"discoverable", true},
         {"creationOrder", 1U},
         {"rpId", "example.com"},
@@ -347,13 +353,17 @@ void test_credential_store_round_trip() {
     const auto credential = make_credential();
 
     CredentialStore writer(temporary.path(), key);
-    writer.put(credential);
+    writer.put(credential, TEST_OWNER_UID);
 
     CredentialStore reader(temporary.path(), key);
     reader.load();
-    const auto& loaded = reader.get_by_credId(credential.id);
+    const auto& loaded = reader.get_by_credId(
+        credential.id,
+        TEST_OWNER_UID
+    );
 
     CHECK(loaded.id == credential.id);
+    CHECK(loaded.ownerUid == TEST_OWNER_UID);
     CHECK(loaded.rpId == credential.rpId);
     CHECK(loaded.userId == credential.userId);
     CHECK(loaded.userName == credential.userName);
@@ -407,6 +417,19 @@ void test_discoverability_schema_is_required() {
     auto zero_order = valid_storage_entry();
     zero_order["creationOrder"] = 0U;
     expect_rejected(std::move(zero_order));
+
+    auto missing_owner = valid_storage_entry();
+    missing_owner.erase("ownerUid");
+    expect_rejected(std::move(missing_owner));
+
+    auto wrong_owner_type = valid_storage_entry();
+    wrong_owner_type["ownerUid"] = "alice";
+    expect_rejected(std::move(wrong_owner_type));
+
+    auto oversized_owner = valid_storage_entry();
+    oversized_owner["ownerUid"] =
+        static_cast<uint64_t>(std::numeric_limits<uint32_t>::max()) + 1;
+    expect_rejected(std::move(oversized_owner));
 }
 
 void test_discoverable_credential_replaces_same_rp_account() {
@@ -425,25 +448,33 @@ void test_discoverable_credential_replaces_same_rp_account() {
     const auto replacement = make_credential(
         0x44, "example.com", user_id, true
     );
+    const auto other_owner = make_credential(
+        0x45, "example.com", user_id, true, OTHER_OWNER_UID
+    );
 
     CredentialStore writer(temporary.path(), key);
-    writer.put(old_credential);
-    writer.put(non_discoverable);
-    writer.put(other_rp);
-    writer.put(replacement);
+    writer.put(old_credential, TEST_OWNER_UID);
+    writer.put(non_discoverable, TEST_OWNER_UID);
+    writer.put(other_rp, TEST_OWNER_UID);
+    writer.put(other_owner, OTHER_OWNER_UID);
+    writer.put(replacement, TEST_OWNER_UID);
 
-    CHECK(!writer.has(old_credential.id));
-    CHECK(writer.has(non_discoverable.id));
-    CHECK(writer.has(other_rp.id));
-    CHECK(writer.has(replacement.id));
-    CHECK(writer.get_by_credId(replacement.id).creationOrder == 4);
+    CHECK(!writer.has(old_credential.id, TEST_OWNER_UID));
+    CHECK(writer.has(non_discoverable.id, TEST_OWNER_UID));
+    CHECK(writer.has(other_rp.id, TEST_OWNER_UID));
+    CHECK(writer.has(other_owner.id, OTHER_OWNER_UID));
+    CHECK(writer.has(replacement.id, TEST_OWNER_UID));
+    CHECK(
+        writer.get_by_credId(replacement.id, TEST_OWNER_UID).creationOrder == 5
+    );
 
     CredentialStore reader(temporary.path(), key);
     reader.load();
-    CHECK(!reader.has(old_credential.id));
-    CHECK(reader.has(non_discoverable.id));
-    CHECK(reader.has(other_rp.id));
-    CHECK(reader.has(replacement.id));
+    CHECK(!reader.has(old_credential.id, TEST_OWNER_UID));
+    CHECK(reader.has(non_discoverable.id, TEST_OWNER_UID));
+    CHECK(reader.has(other_rp.id, TEST_OWNER_UID));
+    CHECK(reader.has(other_owner.id, OTHER_OWNER_UID));
+    CHECK(reader.has(replacement.id, TEST_OWNER_UID));
 }
 
 void test_non_discoverable_credentials_do_not_replace_each_other() {
@@ -458,11 +489,11 @@ void test_non_discoverable_credentials_do_not_replace_each_other() {
     );
 
     CredentialStore store(temporary.path(), key);
-    store.put(first);
-    store.put(second);
+    store.put(first, TEST_OWNER_UID);
+    store.put(second, TEST_OWNER_UID);
 
-    CHECK(store.has(first.id));
-    CHECK(store.has(second.id));
+    CHECK(store.has(first.id, TEST_OWNER_UID));
+    CHECK(store.has(second.id, TEST_OWNER_UID));
 }
 
 void test_assertion_selection_respects_discoverability_and_rp() {
@@ -482,14 +513,14 @@ void test_assertion_selection_respects_discoverability_and_rp() {
     );
 
     CredentialStore store(temporary.path(), key);
-    store.put(older_discoverable);
-    store.put(non_discoverable);
-    store.put(newer_discoverable);
-    store.put(other_rp);
+    store.put(older_discoverable, TEST_OWNER_UID);
+    store.put(non_discoverable, TEST_OWNER_UID);
+    store.put(newer_discoverable, TEST_OWNER_UID);
+    store.put(other_rp, TEST_OWNER_UID);
 
     const std::vector<PublicKeyCredentialDescriptor> no_allow_list;
     const auto discovered = store.find_for_assertion(
-        "example.com", no_allow_list
+        "example.com", no_allow_list, TEST_OWNER_UID
     );
     CHECK(discovered.size() == 2);
     CHECK(discovered[0].id == newer_discoverable.id);
@@ -502,10 +533,94 @@ void test_assertion_selection_respects_discoverability_and_rp() {
         {.type = "wrong-type", .id = older_discoverable.id},
         {.type = "public-key", .id = newer_discoverable.id}
     };
-    const auto allowed = store.find_for_assertion("example.com", allow_list);
+    const auto allowed = store.find_for_assertion(
+        "example.com",
+        allow_list,
+        TEST_OWNER_UID
+    );
     CHECK(allowed.size() == 2);
     CHECK(allowed[0].id == non_discoverable.id);
     CHECK(allowed[1].id == newer_discoverable.id);
+}
+
+void test_credential_access_is_scoped_to_local_owner() {
+    TemporaryStore temporary;
+    const std::vector<uint8_t> key(32, 0xB6);
+    const auto owner_discoverable = make_credential(
+        0x65, "example.com", {0x05}, true, TEST_OWNER_UID
+    );
+    const auto owner_non_discoverable = make_credential(
+        0x66, "example.com", {0x06}, false, TEST_OWNER_UID
+    );
+    const auto foreign_discoverable = make_credential(
+        0x67, "example.com", {0x07}, true, OTHER_OWNER_UID
+    );
+    const auto foreign_non_discoverable = make_credential(
+        0x68, "example.com", {0x08}, false, OTHER_OWNER_UID
+    );
+
+    CredentialStore store(temporary.path(), key);
+    store.put(owner_discoverable, TEST_OWNER_UID);
+    store.put(owner_non_discoverable, TEST_OWNER_UID);
+    store.put(foreign_discoverable, OTHER_OWNER_UID);
+    store.put(foreign_non_discoverable, OTHER_OWNER_UID);
+
+    CHECK(store.has(owner_discoverable.id, TEST_OWNER_UID));
+    CHECK(!store.has(owner_discoverable.id, OTHER_OWNER_UID));
+    CHECK(!store.has_for_rp(
+        owner_discoverable.id,
+        "example.com",
+        OTHER_OWNER_UID
+    ));
+
+    const std::vector<PublicKeyCredentialDescriptor> no_allow_list;
+    const auto discovered = store.find_for_assertion(
+        "example.com",
+        no_allow_list,
+        TEST_OWNER_UID
+    );
+    CHECK(discovered.size() == 1);
+    CHECK(discovered.front().id == owner_discoverable.id);
+
+    const std::vector<PublicKeyCredentialDescriptor> allow_list{
+        {
+            .type = "public-key",
+            .id = foreign_non_discoverable.id,
+            .transports = {}
+        },
+        {
+            .type = "public-key",
+            .id = owner_non_discoverable.id,
+            .transports = {}
+        }
+    };
+    const auto allowed = store.find_for_assertion(
+        "example.com",
+        allow_list,
+        TEST_OWNER_UID
+    );
+    CHECK(allowed.size() == 1);
+    CHECK(allowed.front().id == owner_non_discoverable.id);
+
+    bool foreign_read_rejected = false;
+    try {
+        (void)store.get_by_credId(owner_discoverable.id, OTHER_OWNER_UID);
+    } catch(const std::out_of_range&) {
+        foreign_read_rejected = true;
+    }
+    CHECK(foreign_read_rejected);
+
+    bool foreign_update_rejected = false;
+    try {
+        store.incrementSigCount(owner_discoverable.id, OTHER_OWNER_UID);
+    } catch(const std::out_of_range&) {
+        foreign_update_rejected = true;
+    }
+    CHECK(foreign_update_rejected);
+    CHECK(
+        store.get_by_credId(owner_discoverable.id, TEST_OWNER_UID).signCount ==
+        owner_discoverable.signCount
+    );
 }
 
 void test_failed_discoverable_replacement_preserves_old_credential() {
@@ -520,25 +635,25 @@ void test_failed_discoverable_replacement_preserves_old_credential() {
     );
 
     CredentialStore writer(temporary.path(), key);
-    writer.put(old_credential);
+    writer.put(old_credential, TEST_OWNER_UID);
     CHECK(::chmod(temporary.directory().c_str(), 0500) == 0);
 
     bool rejected = false;
     try {
-        writer.put(replacement);
+        writer.put(replacement, TEST_OWNER_UID);
     } catch(const std::exception&) {
         rejected = true;
     }
     CHECK(::chmod(temporary.directory().c_str(), 0700) == 0);
 
     CHECK(rejected);
-    CHECK(writer.has(old_credential.id));
-    CHECK(!writer.has(replacement.id));
+    CHECK(writer.has(old_credential.id, TEST_OWNER_UID));
+    CHECK(!writer.has(replacement.id, TEST_OWNER_UID));
 
     CredentialStore reader(temporary.path(), key);
     reader.load();
-    CHECK(reader.has(old_credential.id));
-    CHECK(!reader.has(replacement.id));
+    CHECK(reader.has(old_credential.id, TEST_OWNER_UID));
+    CHECK(!reader.has(replacement.id, TEST_OWNER_UID));
 }
 
 void test_credential_lookup_for_rp_is_scoped() {
@@ -547,11 +662,22 @@ void test_credential_lookup_for_rp_is_scoped() {
     const auto credential = make_credential(0x73, "example.com");
 
     CredentialStore store(temporary.path(), key);
-    store.put(credential);
+    store.put(credential, TEST_OWNER_UID);
 
-    CHECK(store.has_for_rp(credential.id, "example.com"));
-    CHECK(!store.has_for_rp(credential.id, "other.example"));
-    CHECK(!store.has_for_rp(std::vector<uint8_t>(16, 0x74), "example.com"));
+    CHECK(store.has_for_rp(
+        credential.id, "example.com", TEST_OWNER_UID
+    ));
+    CHECK(!store.has_for_rp(
+        credential.id, "other.example", TEST_OWNER_UID
+    ));
+    CHECK(!store.has_for_rp(
+        credential.id, "example.com", OTHER_OWNER_UID
+    ));
+    CHECK(!store.has_for_rp(
+        std::vector<uint8_t>(16, 0x74),
+        "example.com",
+        TEST_OWNER_UID
+    ));
 }
 
 void test_repeated_save_replaces_database_durably() {
@@ -565,12 +691,14 @@ void test_repeated_save_replaces_database_durably() {
     stale.close();
 
     CredentialStore writer(temporary.path(), key);
-    writer.put(credential);
-    writer.incrementSigCount(credential.id);
+    writer.put(credential, TEST_OWNER_UID);
+    writer.incrementSigCount(credential.id, TEST_OWNER_UID);
 
     CredentialStore reader(temporary.path(), key);
     reader.load();
-    CHECK(reader.get_by_credId(credential.id).signCount == 5);
+    CHECK(
+        reader.get_by_credId(credential.id, TEST_OWNER_UID).signCount == 5
+    );
     CHECK(!contains_generated_temporary_file(temporary.directory()));
 
     struct stat status{};
@@ -586,13 +714,13 @@ void test_failed_replacement_rolls_back_and_removes_temporary_file() {
     CredentialStore writer(temporary.path(), key);
     bool rejected = false;
     try {
-        writer.put(make_credential());
+        writer.put(make_credential(), TEST_OWNER_UID);
     } catch(const std::exception&) {
         rejected = true;
     }
 
     CHECK(rejected);
-    CHECK(!writer.has(make_credential().id));
+    CHECK(!writer.has(make_credential().id, TEST_OWNER_UID));
     CHECK(!contains_generated_temporary_file(temporary.directory()));
 }
 
@@ -603,24 +731,24 @@ void test_signature_counter_overflow_is_rejected() {
     credential.signCount = std::numeric_limits<uint32_t>::max();
 
     CredentialStore writer(temporary.path(), key);
-    writer.put(credential);
+    writer.put(credential, TEST_OWNER_UID);
 
     bool rejected = false;
     try {
-        writer.incrementSigCount(credential.id);
+        writer.incrementSigCount(credential.id, TEST_OWNER_UID);
     } catch(const std::overflow_error&) {
         rejected = true;
     }
     CHECK(rejected);
     CHECK(
-        writer.get_by_credId(credential.id).signCount ==
+        writer.get_by_credId(credential.id, TEST_OWNER_UID).signCount ==
         std::numeric_limits<uint32_t>::max()
     );
 
     CredentialStore reader(temporary.path(), key);
     reader.load();
     CHECK(
-        reader.get_by_credId(credential.id).signCount ==
+        reader.get_by_credId(credential.id, TEST_OWNER_UID).signCount ==
         std::numeric_limits<uint32_t>::max()
     );
 }
@@ -631,11 +759,11 @@ void test_duplicate_credential_id_is_rejected() {
     const auto credential = make_credential();
 
     CredentialStore writer(temporary.path(), key);
-    writer.put(credential);
+    writer.put(credential, TEST_OWNER_UID);
 
     bool rejected = false;
     try {
-        writer.put(credential);
+        writer.put(credential, TEST_OWNER_UID);
     } catch(const std::invalid_argument&) {
         rejected = true;
     }
@@ -647,7 +775,7 @@ void test_modified_ciphertext_is_rejected() {
     const std::vector<uint8_t> key(32, 0x5A);
 
     CredentialStore writer(temporary.path(), key);
-    writer.put(make_credential());
+    writer.put(make_credential(), TEST_OWNER_UID);
 
     std::fstream file(
         temporary.path(),
@@ -678,7 +806,7 @@ void test_authenticated_header_rejects_generation_tampering() {
     const std::vector<uint8_t> key(32, 0x5B);
 
     CredentialStore writer(temporary.path(), key);
-    writer.put(make_credential());
+    writer.put(make_credential(), TEST_OWNER_UID);
 
     auto contents = read_file(temporary.path());
     CHECK(contents.size() > 16);
@@ -701,9 +829,9 @@ void test_rollback_is_rejected() {
     FakeGenerationCounter counter;
 
     CredentialStore writer(temporary.path(), key, &counter);
-    writer.put(make_credential());
+    writer.put(make_credential(), TEST_OWNER_UID);
     const auto old_contents = read_file(temporary.path());
-    writer.incrementSigCount(make_credential().id);
+    writer.incrementSigCount(make_credential().id, TEST_OWNER_UID);
     CHECK(counter.read() == 2);
 
     write_file(temporary.path(), old_contents);
@@ -723,7 +851,7 @@ void test_interrupted_commit_is_reconciled_after_authentication() {
     FakeGenerationCounter counter;
 
     CredentialStore writer(temporary.path(), key, &counter);
-    writer.put(make_credential());
+    writer.put(make_credential(), TEST_OWNER_UID);
     CHECK(counter.read() == 1);
 
     counter.set(0);
@@ -732,7 +860,7 @@ void test_interrupted_commit_is_reconciled_after_authentication() {
 
     CHECK(counter.read() == 1);
     CHECK(counter.incrementCount == 2);
-    CHECK(reader.has(make_credential().id));
+    CHECK(reader.has(make_credential().id, TEST_OWNER_UID));
 }
 
 void test_failed_counter_commit_requires_reload_and_recovers() {
@@ -744,17 +872,17 @@ void test_failed_counter_commit_requires_reload_and_recovers() {
     CredentialStore writer(temporary.path(), key, &counter);
     bool failed = false;
     try {
-        writer.put(make_credential());
+        writer.put(make_credential(), TEST_OWNER_UID);
     } catch(const std::runtime_error&) {
         failed = true;
     }
     CHECK(failed);
     CHECK(counter.read() == 0);
-    CHECK(!writer.has(make_credential().id));
+    CHECK(!writer.has(make_credential().id, TEST_OWNER_UID));
 
     bool refused_second_write = false;
     try {
-        writer.put(make_credential());
+        writer.put(make_credential(), TEST_OWNER_UID);
     } catch(const std::runtime_error&) {
         refused_second_write = true;
     }
@@ -763,7 +891,7 @@ void test_failed_counter_commit_requires_reload_and_recovers() {
     CredentialStore reader(temporary.path(), key, &counter);
     reader.load();
     CHECK(counter.read() == 1);
-    CHECK(reader.has(make_credential().id));
+    CHECK(reader.has(make_credential().id, TEST_OWNER_UID));
 }
 
 void test_development_clear_commits_empty_store() {
@@ -773,17 +901,17 @@ void test_development_clear_commits_empty_store() {
     const auto credential = make_credential();
 
     CredentialStore store(temporary.path(), key, &counter);
-    store.put(credential);
+    store.put(credential, TEST_OWNER_UID);
     CHECK(counter.read() == 1);
-    CHECK(store.has(credential.id));
+    CHECK(store.has(credential.id, TEST_OWNER_UID));
 
     store.clear();
     CHECK(counter.read() == 2);
-    CHECK(!store.has(credential.id));
+    CHECK(!store.has(credential.id, TEST_OWNER_UID));
 
     CredentialStore reader(temporary.path(), key, &counter);
     reader.load();
-    CHECK(!reader.has(credential.id));
+    CHECK(!reader.has(credential.id, TEST_OWNER_UID));
 }
 
 void test_development_clear_recovers_after_counter_failure() {
@@ -793,7 +921,7 @@ void test_development_clear_recovers_after_counter_failure() {
     const auto credential = make_credential();
 
     CredentialStore store(temporary.path(), key, &counter);
-    store.put(credential);
+    store.put(credential, TEST_OWNER_UID);
     counter.failNextIncrement = true;
 
     bool failed = false;
@@ -804,12 +932,12 @@ void test_development_clear_recovers_after_counter_failure() {
     }
     CHECK(failed);
     CHECK(counter.read() == 1);
-    CHECK(store.has(credential.id));
+    CHECK(store.has(credential.id, TEST_OWNER_UID));
 
     CredentialStore reader(temporary.path(), key, &counter);
     reader.load();
     CHECK(counter.read() == 2);
-    CHECK(!reader.has(credential.id));
+    CHECK(!reader.has(credential.id, TEST_OWNER_UID));
 }
 
 void test_store_process_lock_rejects_concurrent_owner() {
@@ -848,7 +976,7 @@ void test_insecure_file_permissions_are_rejected() {
     TemporaryStore temporary;
     const std::vector<uint8_t> key(32, 0x60);
     CredentialStore writer(temporary.path(), key);
-    writer.put(make_credential());
+    writer.put(make_credential(), TEST_OWNER_UID);
     CHECK(::chmod(temporary.path().c_str(), 0640) == 0);
 
     CredentialStore reader(temporary.path(), key);
@@ -866,7 +994,7 @@ void test_symlink_store_is_rejected() {
     const std::vector<uint8_t> key(32, 0x61);
     const auto target = temporary.directory() / "target.bin";
     CredentialStore writer(target, key);
-    writer.put(make_credential());
+    writer.put(make_credential(), TEST_OWNER_UID);
     CHECK(::symlink(target.c_str(), temporary.path().c_str()) == 0);
 
     CredentialStore reader(temporary.path(), key);
@@ -925,6 +1053,7 @@ int main() {
         test_discoverable_credential_replaces_same_rp_account();
         test_non_discoverable_credentials_do_not_replace_each_other();
         test_assertion_selection_respects_discoverability_and_rp();
+        test_credential_access_is_scoped_to_local_owner();
         test_credential_lookup_for_rp_is_scoped();
         test_failed_discoverable_replacement_preserves_old_credential();
         test_repeated_save_replaces_database_durably();

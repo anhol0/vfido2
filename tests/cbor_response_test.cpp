@@ -286,6 +286,7 @@ AssertionFields decode_assertion(const std::vector<uint8_t>& response) {
 StoredCredential assertion_credential() {
     return StoredCredential{
         .id = {0x01, 0x02},
+        .ownerUid = 1000,
         .rpId = "example.com",
         .userId = {0x03, 0x04},
         .userName = std::string("al\0ice", 6),

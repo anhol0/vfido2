@@ -508,6 +508,7 @@ namespace {
     StoredCredential assertion_credential(uint8_t id_byte) {
         return StoredCredential{
             .id = std::vector<uint8_t>(16, id_byte),
+            .ownerUid = 1000,
             .rpId = "example.com",
             .userId = {id_byte},
             .userName = "alice",
@@ -555,15 +556,17 @@ namespace {
         AssertionSequence sequence;
         sequence.begin(
             origin_cid,
+            1000,
             {assertion_credential(0x11), assertion_credential(0x22)},
             start
         );
 
-        CHECK(!sequence.next(foreign_cid, start).has_value());
+        CHECK(!sequence.next(foreign_cid, 1000, start).has_value());
         CHECK(sequence.origin_cid() == origin_cid);
 
         const auto first = sequence.next(
             origin_cid,
+            1000,
             start + std::chrono::seconds(30)
         );
         CHECK(first.has_value());
@@ -572,24 +575,52 @@ namespace {
 
         const auto second = sequence.next(
             origin_cid,
+            1000,
             start + std::chrono::seconds(60)
         );
         CHECK(second.has_value());
         CHECK(second->id == std::vector<uint8_t>(16, 0x22));
         CHECK(sequence.origin_cid() == 0);
-        CHECK(!sequence.next(origin_cid, start).has_value());
+        CHECK(!sequence.next(origin_cid, 1000, start).has_value());
 
         sequence.begin(
             origin_cid,
+            1000,
             {assertion_credential(0x33)},
             start
         );
         CHECK(
             !sequence.next(
                 origin_cid,
+                1000,
                 start + std::chrono::seconds(31)
             ).has_value()
         );
+        CHECK(sequence.origin_cid() == 0);
+
+        sequence.begin(
+            origin_cid,
+            1000,
+            {assertion_credential(0x44)},
+            start
+        );
+        CHECK(!sequence.next(origin_cid, 1001, start).has_value());
+        CHECK(sequence.origin_cid() == 0);
+
+        auto foreign_credential = assertion_credential(0x55);
+        foreign_credential.ownerUid = 1001;
+        bool mixed_owner_rejected = false;
+        try {
+            sequence.begin(
+                origin_cid,
+                1000,
+                {std::move(foreign_credential)},
+                start
+            );
+        } catch(const std::invalid_argument&) {
+            mixed_owner_rejected = true;
+        }
+        CHECK(mixed_owner_rejected);
         CHECK(sequence.origin_cid() == 0);
     }
 

@@ -19,6 +19,8 @@
 
 namespace {
 
+constexpr uint32_t TEST_OWNER_UID = 1000;
+
 struct PkeyDeleter {
     void operator()(EVP_PKEY* key) const noexcept {
         EVP_PKEY_free(key);
@@ -277,6 +279,7 @@ void test_transient_credential_parent(
 StoredCredential make_credential() {
     return StoredCredential{
         .id = std::vector<uint8_t>(16, 0x71),
+        .ownerUid = TEST_OWNER_UID,
         .rpId = "example.com",
         .userId = {0x01},
         .userName = "alice",
@@ -309,7 +312,7 @@ void setup(
             &security
         );
         store.load();
-        store.put(make_credential());
+        store.put(make_credential(), TEST_OWNER_UID);
     }
     if(security.read() != 1) {
         throw std::runtime_error("Rollback counter did not advance");
@@ -322,7 +325,7 @@ void setup(
             &security
         );
         reader.load();
-        if(!reader.has(make_credential().id)) {
+        if(!reader.has(make_credential().id, TEST_OWNER_UID)) {
             throw std::runtime_error("Credential did not round-trip");
         }
     }
@@ -349,7 +352,7 @@ void setup(
             &security
         );
         reader.load();
-        if(reader.has(make_credential().id)) {
+        if(reader.has(make_credential().id, TEST_OWNER_UID)) {
             throw std::runtime_error("Credential remained after store clear");
         }
     }
