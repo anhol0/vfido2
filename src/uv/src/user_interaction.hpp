@@ -131,8 +131,8 @@ class UserInteraction {
 public:
     virtual ~UserInteraction() = default;
 
-    // Implementations report cancellation and deadline expiry with the
-    // existing OperationCancelled and UserActionTimedOut exceptions.
+    // Implementations report cancellation, deadline expiry, and loss of the
+    // registered agent with the exceptions declared in cancellation.hpp.
     [[nodiscard]] virtual UserContext current_context(
         std::stop_token stop
     ) = 0;

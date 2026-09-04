@@ -9,15 +9,12 @@
 #include <algorithm>
 #include <cerrno>
 #include <cctype>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
-#include <iostream>
 #include <string>
 #include <string_view>
 #include <strings.h>
-#include <termios.h>
 #include <unistd.h>
 
 namespace {
@@ -65,42 +62,6 @@ bool reports_failure(std::string_view message) {
         message.find("try again") != std::string_view::npos;
 }
 
-class TerminalState {
-public:
-    TerminalState() noexcept {
-        valid_ = tcgetattr(STDIN_FILENO, &original_) == 0;
-    }
-
-    ~TerminalState() {
-        restore();
-    }
-
-    TerminalState(const TerminalState&) = delete;
-    TerminalState& operator=(const TerminalState&) = delete;
-
-    bool disable_echo() noexcept {
-        if(!valid_)
-            return false;
-        termios hidden = original_;
-        hidden.c_lflag &= static_cast<tcflag_t>(~ECHO);
-        return tcsetattr(STDIN_FILENO, TCSAFLUSH, &hidden) == 0;
-    }
-
-    bool restore() noexcept {
-        if(!valid_ || restored_)
-            return true;
-        if(tcsetattr(STDIN_FILENO, TCSAFLUSH, &original_) != 0)
-            return false;
-        restored_ = true;
-        return true;
-    }
-
-private:
-    termios original_{};
-    bool valid_ = false;
-    bool restored_ = false;
-};
-
 void free_responses(pam_response* responses, int count) noexcept {
     if(responses == nullptr)
         return;
@@ -113,69 +74,43 @@ void free_responses(pam_response* responses, int count) noexcept {
     std::free(responses);
 }
 
-int read_response(const pam_message& message, bool hide, char** response) {
-    if(response == nullptr)
+int read_password_response(char** response) {
+    if(
+        response == nullptr ||
+        fcntl(vauth::uv::AUTH_HANDLER_RESPONSE_FD, F_GETFD) < 0
+    ) {
         return PAM_CONV_ERR;
+    }
 
-    if(hide) {
-        send_status(vauth::uv::AuthHandlerStatus::password_required);
-        if(
-            fcntl(vauth::uv::AUTH_HANDLER_RESPONSE_FD, F_GETFD) >= 0
-        ) {
-            std::array<char, vauth::uv::MAX_PASSWORD_SIZE + 1> input{};
-            std::size_t used = 0;
-            while(true) {
-                const ssize_t count = read(
-                    vauth::uv::AUTH_HANDLER_RESPONSE_FD,
-                    input.data() + used,
-                    input.size() - used
-                );
-                if(count > 0) {
-                    used += static_cast<std::size_t>(count);
-                    if(used > vauth::uv::MAX_PASSWORD_SIZE) {
-                        explicit_bzero(input.data(), input.size());
-                        return PAM_CONV_ERR;
-                    }
-                    continue;
-                }
-                if(count == 0)
-                    break;
-                if(errno == EINTR)
-                    continue;
+    send_status(vauth::uv::AuthHandlerStatus::password_required);
+    std::array<char, vauth::uv::MAX_PASSWORD_SIZE + 1> input{};
+    std::size_t used = 0;
+    while(true) {
+        const ssize_t count = read(
+            vauth::uv::AUTH_HANDLER_RESPONSE_FD,
+            input.data() + used,
+            input.size() - used
+        );
+        if(count > 0) {
+            used += static_cast<std::size_t>(count);
+            if(used > vauth::uv::MAX_PASSWORD_SIZE) {
                 explicit_bzero(input.data(), input.size());
                 return PAM_CONV_ERR;
             }
-            if(std::memchr(input.data(), '\0', used) != nullptr) {
-                explicit_bzero(input.data(), input.size());
-                return PAM_CONV_ERR;
-            }
-            input[used] = '\0';
-            char* copy = ::strdup(input.data());
-            explicit_bzero(input.data(), input.size());
-            if(copy == nullptr)
-                return PAM_BUF_ERR;
-            *response = copy;
-            return PAM_SUCCESS;
+            continue;
         }
-    }
-
-    TerminalState terminal;
-    if(hide && !terminal.disable_echo())
-        return PAM_CONV_ERR;
-
-    constexpr std::size_t maximum_response_size = 1024;
-    std::array<char, maximum_response_size + 1> input{};
-    if(!std::cin.getline(input.data(), input.size())) {
+        if(count == 0)
+            break;
+        if(errno == EINTR)
+            continue;
         explicit_bzero(input.data(), input.size());
         return PAM_CONV_ERR;
     }
-    if(!terminal.restore()) {
+    if(std::memchr(input.data(), '\0', used) != nullptr) {
         explicit_bzero(input.data(), input.size());
         return PAM_CONV_ERR;
     }
-    if(hide)
-        std::fputc('\n', stderr);
-
+    input[used] = '\0';
     char* copy = ::strdup(input.data());
     explicit_bzero(input.data(), input.size());
     if(copy == nullptr)
@@ -217,10 +152,12 @@ int conversation(
             int rc = PAM_SUCCESS;
             switch(messages[i]->msg_style) {
                 case PAM_PROMPT_ECHO_OFF:
-                    rc = read_response(*messages[i], true, &replies[i].resp);
+                    rc = read_password_response(&replies[i].resp);
                     break;
                 case PAM_PROMPT_ECHO_ON:
-                    rc = read_response(*messages[i], false, &replies[i].resp);
+                    // The daemon never obtains identity or other visible PAM
+                    // responses from inherited standard input.
+                    rc = PAM_CONV_ERR;
                     break;
                 case PAM_TEXT_INFO:
                 case PAM_ERROR_MSG: {

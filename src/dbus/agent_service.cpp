@@ -420,8 +420,9 @@ public:
             case PresenceWaitResult::client_cancelled:
                 return UserInteractionResult::cancelled;
             case PresenceWaitResult::platform_cancelled:
-            case PresenceWaitResult::invalidated:
                 throw OperationCancelled{};
+            case PresenceWaitResult::invalidated:
+                throw UserInteractionUnavailable{};
         }
         throw std::logic_error("Unknown presence response state");
     }
@@ -447,8 +448,9 @@ public:
             case PasswordWaitStatus::client_cancelled:
                 throw UserInteractionCancelled{};
             case PasswordWaitStatus::platform_cancelled:
-            case PasswordWaitStatus::invalidated:
                 throw OperationCancelled{};
+            case PasswordWaitStatus::invalidated:
+                throw UserInteractionUnavailable{};
         }
         throw std::logic_error("Unknown password response state");
     }

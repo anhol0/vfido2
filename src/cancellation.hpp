@@ -24,6 +24,13 @@ public:
     }
 };
 
+class UserInteractionUnavailable final : public std::exception {
+public:
+    const char* what() const noexcept override {
+        return "No active vAuth user-interaction agent is registered";
+    }
+};
+
 inline void cancellation_point(std::stop_token stop) {
     if(stop.stop_requested()) {
         throw OperationCancelled{};

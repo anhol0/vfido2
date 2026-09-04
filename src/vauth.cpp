@@ -296,17 +296,15 @@ int main(int argc, char** argv) {
         PamUserInteraction user_interaction(
             "vauth",
             VAUTH_DEBUG_PAM_CONFIG_DIR,
-            &agent_service,
-            &agent_service,
-            true
+            agent_service,
+            agent_service
         );
 #else
         PamUserInteraction user_interaction(
             "vauth",
             "/etc/vauth/config",
-            &agent_service,
-            &agent_service,
-            false
+            agent_service,
+            agent_service
         );
 #endif
         run(device, store, key_provider, user_interaction);

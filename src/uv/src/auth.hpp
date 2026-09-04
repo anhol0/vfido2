@@ -10,9 +10,8 @@ public:
     PamUserInteraction(
         std::string process_name,
         std::string configuration_directory,
-        UserContextProvider* context_provider = nullptr,
-        UserInteractionChannel* interaction_channel = nullptr,
-        bool allow_local_context = true
+        UserContextProvider& context_provider,
+        UserInteractionChannel& interaction_channel
     );
 
     [[nodiscard]] UserContext current_context(
@@ -34,7 +33,6 @@ public:
 private:
     std::string processName_;
     std::string configurationDirectory_;
-    UserContextProvider* contextProvider_;
-    UserInteractionChannel* interactionChannel_;
-    bool allowLocalContext_;
+    UserContextProvider& contextProvider_;
+    UserInteractionChannel& interactionChannel_;
 };

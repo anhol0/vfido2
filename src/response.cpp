@@ -120,6 +120,11 @@ CTAPPacket handle_cbor(
             throw;
         } catch (const UserActionTimedOut&) {
             throw;
+        } catch(const UserInteractionUnavailable&) {
+            return make_cbor_error(
+                request.cid,
+                CTAPError::CTAP2_ERR_OPERATION_DENIED
+            );
         } catch(const CborEncodingError& error) {
             return make_cbor_error(
                 request.cid,
@@ -163,6 +168,12 @@ CTAPPacket handle_cbor(
             } catch (const UserActionTimedOut&) {
                 gar.clear();
                 throw;
+            } catch(const UserInteractionUnavailable&) {
+                gar.clear();
+                return make_cbor_error(
+                    request.cid,
+                    CTAPError::CTAP2_ERR_OPERATION_DENIED
+                );
             } catch(const CborEncodingError& error) {
                 gar.clear();
                 return make_cbor_error(
@@ -197,6 +208,12 @@ CTAPPacket handle_cbor(
             } catch (const UserActionTimedOut&) {
                 gar.clear();
                 throw;
+            } catch(const UserInteractionUnavailable&) {
+                gar.clear();
+                return make_cbor_error(
+                    request.cid,
+                    CTAPError::CTAP2_ERR_OPERATION_DENIED
+                );
             } catch(const CborEncodingError& error) {
                 gar.clear();
                 return make_cbor_error(

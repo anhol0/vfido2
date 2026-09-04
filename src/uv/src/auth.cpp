@@ -7,61 +7,45 @@
 #include "keepalive.hpp"
 
 #include <chrono>
-#include <cerrno>
-#include <functional>
-#include <limits>
-#include <pwd.h>
 #include <security/_pam_types.h>
-#include <stdexcept>
 #include <string>
-#include <string_view>
-#include <system_error>
-#include <termios.h>
-#include <unistd.h>
 #include <utility>
-#include <vector>
 
 namespace {
 
 constexpr auto USER_ACTION_TIMEOUT = std::chrono::seconds(30);
 
 void publish_state(
-    UserInteractionChannel* channel,
+    UserInteractionChannel& channel,
     const UserContext& user,
     const UserInteractionRequest& request,
     UserInteractionState state
 ) {
-    if(channel != nullptr)
-        channel->publish_state(user, request, state);
+    channel.publish_state(user, request, state);
 }
 
 bool context_is_still_current(
-    UserContextProvider* provider,
+    UserContextProvider& provider,
     const UserContext& user
 ) {
-    if(!user.session)
-        return true;
-    if(provider == nullptr)
-        return false;
-    const auto current = provider->current_context();
+    const auto current = provider.current_context();
     return current && current->binding() == user.binding();
 }
 
 class InteractionScope {
 public:
     InteractionScope(
-        UserInteractionChannel* channel,
+        UserInteractionChannel& channel,
         const UserContext& user,
         const UserInteractionRequest& request
     ) : channel_(channel), user_(user), request_(request) {
-        if(channel_ != nullptr) {
-            request_.requestId = channel_->begin_interaction(user_, request_);
-        }
+        request_.requestId = channel_.begin_interaction(user_, request_);
+        if(request_.requestId == 0)
+            throw UserInteractionUnavailable{};
     }
 
     ~InteractionScope() {
-        if(channel_ != nullptr)
-            channel_->end_interaction(user_, request_);
+        channel_.end_interaction(user_, request_);
     }
 
     InteractionScope(const InteractionScope&) = delete;
@@ -72,41 +56,10 @@ public:
     }
 
 private:
-    UserInteractionChannel* channel_;
+    UserInteractionChannel& channel_;
     const UserContext& user_;
     UserInteractionRequest request_;
 };
-
-class TerminalStateRestorer {
-public:
-    TerminalStateRestorer() noexcept {
-        valid_ = tcgetattr(STDIN_FILENO, &original_) == 0;
-    }
-
-    ~TerminalStateRestorer() {
-        if(valid_)
-            static_cast<void>(tcsetattr(STDIN_FILENO, TCSAFLUSH, &original_));
-    }
-
-    TerminalStateRestorer(const TerminalStateRestorer&) = delete;
-    TerminalStateRestorer& operator=(const TerminalStateRestorer&) = delete;
-
-private:
-    termios original_{};
-    bool valid_ = false;
-};
-
-std::string zenity_program() {
-    constexpr const char* candidates[] = {
-        "/usr/bin/zenity",
-        "/bin/zenity"
-    };
-    for(const char* candidate : candidates) {
-        if(access(candidate, X_OK) == 0)
-            return candidate;
-    }
-    throw std::runtime_error("zenity executable was not found");
-}
 
 int authenticate_user(
     const std::string& username,
@@ -114,36 +67,30 @@ int authenticate_user(
     const std::string& confdir,
     std::stop_token stop,
     KeepaliveState& keepalive,
-    UserInteractionChannel* interaction_channel,
+    UserInteractionChannel& interaction_channel,
     const UserContext& user,
     const UserInteractionRequest& request
 ) {
-    // The handler normally restores echo itself. This guard also restores the
-    // daemon's original terminal state if cancellation requires SIGKILL.
-    TerminalStateRestorer terminal;
     UserActionKeepaliveGuard waiting_for_user(keepalive);
     const auto deadline = std::chrono::steady_clock::now() +
         USER_ACTION_TIMEOUT;
-    std::function<vauth::uv::SensitiveBytes()> password_callback;
-    if(interaction_channel != nullptr && request.requestId != 0) {
-        password_callback = [
-            interaction_channel,
-            &user,
-            &request,
+    auto password_callback = [
+        &interaction_channel,
+        &user,
+        &request,
+        stop,
+        deadline
+    ] {
+        const auto now = std::chrono::steady_clock::now();
+        if(now >= deadline)
+            throw UserActionTimedOut{};
+        return interaction_channel.wait_for_password(
+            user,
+            request,
             stop,
-            deadline
-        ] {
-            const auto now = std::chrono::steady_clock::now();
-            if(now >= deadline)
-                throw UserActionTimedOut{};
-            return interaction_channel->wait_for_password(
-                user,
-                request,
-                stop,
-                deadline - now
-            );
-        };
-    }
+            deadline - now
+        );
+    };
     const int status = vauth::uv::run_cancellable_program(
         "/proc/self/exe",
         {
@@ -154,7 +101,7 @@ int authenticate_user(
         },
         stop,
         USER_ACTION_TIMEOUT,
-        [interaction_channel, &user, &request](uint8_t raw_status) {
+        [&interaction_channel, &user, &request](uint8_t raw_status) {
             switch(static_cast<vauth::uv::AuthHandlerStatus>(raw_status)) {
                 case vauth::uv::AuthHandlerStatus::fingerprint_required:
                     publish_state(
@@ -182,11 +129,8 @@ int authenticate_user(
                     break;
             }
         },
-        [interaction_channel, &user, &request] {
-            return
-                interaction_channel != nullptr &&
-                request.requestId != 0 &&
-                interaction_channel->cancellation_requested(user, request);
+        [&interaction_channel, &user, &request] {
+            return interaction_channel.cancellation_requested(user, request);
         },
         password_callback
     );
@@ -195,111 +139,27 @@ int authenticate_user(
     return status;
 }
 
-std::string_view presence_question(UserInteractionOperation operation) {
-    switch(operation) {
-        case UserInteractionOperation::make_credential:
-            return "Authorize passkey creation?";
-        case UserInteractionOperation::get_assertion:
-            return "Authorize passkey usage?";
-        case UserInteractionOperation::check_excluded_credential:
-            return "Confirm user presence to continue passkey registration?";
-    }
-    return "Authorize passkey operation?";
-}
-
-bool collect_consent(
-    std::string_view question,
-    std::stop_token stop,
-    KeepaliveState& keepalive
-) {
-    try {
-        const std::string program = zenity_program();
-        UserActionKeepaliveGuard waiting_for_user(keepalive);
-        return vauth::uv::run_cancellable_program(
-            program,
-            {"--question", "--text=" + std::string(question)},
-            stop,
-            USER_ACTION_TIMEOUT
-        ) == 0;
-    } catch(const OperationCancelled&) {
-        throw;
-    } catch(const UserActionTimedOut&) {
-        throw;
-    } catch(const std::exception&) {
-        return false;
-    }
-}
-
-UserContext get_local_user_context() {
-    const char* name = getlogin();
-    if(name == nullptr)
-        throw std::runtime_error("Unable to get current user name");
-
-    const std::string username(name);
-    long buffer_size = sysconf(_SC_GETPW_R_SIZE_MAX);
-    if(buffer_size < 0)
-        buffer_size = 16384;
-
-    std::vector<char> buffer(static_cast<std::size_t>(buffer_size));
-    passwd account{};
-    passwd* result = nullptr;
-    const int rc = getpwnam_r(
-        username.c_str(),
-        &account,
-        buffer.data(),
-        buffer.size(),
-        &result
-    );
-    if(rc != 0)
-        throw std::system_error(rc, std::generic_category(), "getpwnam_r");
-    if(result == nullptr)
-        throw std::runtime_error("Unable to resolve current user name");
-    if(
-        static_cast<uintmax_t>(account.pw_uid) >
-        std::numeric_limits<uint32_t>::max()
-    ) {
-        throw std::runtime_error("Current user UID is out of range");
-    }
-
-    return UserContext{
-        .uid = static_cast<uint32_t>(account.pw_uid),
-        .name = username,
-        .session = std::nullopt
-    };
-}
-
 }
 
 PamUserInteraction::PamUserInteraction(
     std::string process_name,
     std::string configuration_directory,
-    UserContextProvider* context_provider,
-    UserInteractionChannel* interaction_channel,
-    bool allow_local_context
+    UserContextProvider& context_provider,
+    UserInteractionChannel& interaction_channel
 ) :
     processName_(std::move(process_name)),
     configurationDirectory_(std::move(configuration_directory)),
     contextProvider_(context_provider),
-    interactionChannel_(interaction_channel),
-    allowLocalContext_(allow_local_context)
+    interactionChannel_(interaction_channel)
 {}
 
 UserContext PamUserInteraction::current_context(std::stop_token stop) {
     cancellation_point(stop);
-    if(contextProvider_ != nullptr) {
-        if(auto context = contextProvider_->current_context()) {
-            cancellation_point(stop);
-            return std::move(*context);
-        }
+    if(auto context = contextProvider_.current_context()) {
+        cancellation_point(stop);
+        return std::move(*context);
     }
-    if(!allowLocalContext_) {
-        throw std::runtime_error(
-            "No active vAuth user-interaction agent is registered"
-        );
-    }
-    auto user = get_local_user_context();
-    cancellation_point(stop);
-    return user;
+    throw UserInteractionUnavailable{};
 }
 
 UserInteractionResult PamUserInteraction::request_presence(
@@ -317,26 +177,14 @@ UserInteractionResult PamUserInteraction::request_presence(
         UserInteractionState::presence_required
     );
     try {
-        UserInteractionResult response;
-        if(
-            interactionChannel_ != nullptr &&
-            active_request.requestId != 0
-        ) {
-            UserActionKeepaliveGuard waiting_for_user(keepalive);
-            response = interactionChannel_->wait_for_presence(
+        UserActionKeepaliveGuard waiting_for_user(keepalive);
+        const UserInteractionResult response =
+            interactionChannel_.wait_for_presence(
                 user,
                 active_request,
                 stop,
                 USER_ACTION_TIMEOUT
             );
-        } else {
-            response = collect_consent(
-                presence_question(active_request.operation),
-                stop,
-                keepalive
-            ) ? UserInteractionResult::approved
-              : UserInteractionResult::denied;
-        }
         if(response == UserInteractionResult::cancelled) {
             publish_state(
                 interactionChannel_, user, active_request,
