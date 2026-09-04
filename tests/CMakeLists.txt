@@ -72,6 +72,23 @@ add_test(
     COMMAND uv_process_tests
 )
 
+add_executable(uv_user_interaction_tests
+    uv_user_interaction_test.cpp
+)
+
+target_include_directories(uv_user_interaction_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/src
+)
+
+target_link_libraries(uv_user_interaction_tests PRIVATE
+    uv
+)
+
+add_test(
+    NAME uv_user_interaction
+    COMMAND uv_user_interaction_tests
+)
+
 add_executable(dbus_agent_registry_tests
     dbus_agent_registry_test.cpp
     ${PROJECT_SOURCE_DIR}/src/dbus/agent_registry.cpp
