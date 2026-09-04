@@ -4,8 +4,10 @@
 #include "uv/src/auth_handler_status.hpp"
 #include "uv/src/cancellable_process.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <array>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -123,6 +125,41 @@ bool test_child_status_events(const std::string& executable) {
     return true;
 }
 
+bool test_password_delivery(const std::string& executable) {
+    std::stop_source stop;
+    std::size_t password_prompts = 0;
+    CHECK(vauth::uv::run_cancellable_program(
+        executable,
+        {"--child-password"},
+        stop.get_token(),
+        std::chrono::seconds(1),
+        [&password_prompts](uint8_t status) {
+            if(
+                status == static_cast<uint8_t>(
+                    vauth::uv::AuthHandlerStatus::password_required
+                )
+            ) {
+                ++password_prompts;
+            }
+        },
+        {},
+        [] {
+            constexpr std::array<uint8_t, 6> password{
+                's', 'e', 'c', 'r', 'e', 't'
+            };
+            vauth::uv::SensitiveBytes result(password.size());
+            std::copy(
+                password.begin(),
+                password.end(),
+                result.writable_bytes().begin()
+            );
+            return result;
+        }
+    ) == 0);
+    CHECK(password_prompts == 1);
+    return true;
+}
+
 bool test_external_cancellation_interrupts_child(
     const std::string& executable
 ) {
@@ -209,6 +246,47 @@ int main(int argc, char** argv) {
             statuses.size()
         ) == static_cast<ssize_t>(statuses.size()) ? 0 : 1;
     }
+    if(argc == 2 && std::string(argv[1]) == "--child-password") {
+        const uint8_t status = static_cast<uint8_t>(
+            vauth::uv::AuthHandlerStatus::password_required
+        );
+        if(
+            write(
+                vauth::uv::AUTH_HANDLER_STATUS_FD,
+                &status,
+                sizeof(status)
+            ) != static_cast<ssize_t>(sizeof(status))
+        ) {
+            return 1;
+        }
+
+        std::array<uint8_t, 7> password{};
+        std::size_t used = 0;
+        while(used < password.size()) {
+            const ssize_t count = read(
+                vauth::uv::AUTH_HANDLER_RESPONSE_FD,
+                password.data() + used,
+                password.size() - used
+            );
+            if(count > 0) {
+                used += static_cast<std::size_t>(count);
+                continue;
+            }
+            if(count == 0)
+                break;
+            if(errno == EINTR)
+                continue;
+            return 1;
+        }
+        constexpr std::array<uint8_t, 6> expected{
+            's', 'e', 'c', 'r', 'e', 't'
+        };
+        return
+            used == expected.size() &&
+            std::equal(expected.begin(), expected.end(), password.begin())
+                ? 0
+                : 1;
+    }
 
     const std::string executable = std::filesystem::canonical(argv[0]);
     test_support::Runner runner;
@@ -223,6 +301,9 @@ int main(int argc, char** argv) {
     });
     runner.run("test_child_status_events", [&] {
         return test_child_status_events(executable);
+    });
+    runner.run("test_password_delivery", [&] {
+        return test_password_delivery(executable);
     });
     runner.run("test_external_cancellation_interrupts_child", [&] {
         return test_external_cancellation_interrupts_child(executable);

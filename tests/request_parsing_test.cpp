@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "authentication/authenticate.hpp"
+#include "error.hpp"
 #include "registration/registration.hpp"
 #include "test_runner.hpp"
 
@@ -574,6 +575,13 @@ namespace {
         CHECK(!has_assertion_continuations(false, 2));
     }
 
+    void test_ctap20_uv_failure_is_terminal() {
+        CHECK(
+            ctap20_uv_failure_error() ==
+            CTAPError::CTAP2_ERR_OPERATION_DENIED
+        );
+    }
+
     void test_assertion_sequence_channel_timeout_and_exhaustion() {
         constexpr uint32_t origin_cid = 0x01020304;
         constexpr uint32_t foreign_cid = 0x05060708;
@@ -729,6 +737,7 @@ int main() {
         {"test_unsupported_state_is_cleared", test_unsupported_state_is_cleared},
         {"test_get_assertion_rejects_empty_credential_id", test_get_assertion_rejects_empty_credential_id},
         {"test_assertion_interaction_and_flags", test_assertion_interaction_and_flags},
+        {"test_ctap20_uv_failure_is_terminal", test_ctap20_uv_failure_is_terminal},
         {"test_assertion_sequence_channel_timeout_and_exhaustion", test_assertion_sequence_channel_timeout_and_exhaustion},
         {"test_assertion_sequence_is_bound_to_user_session", test_assertion_sequence_is_bound_to_user_session},
         {"test_trailing_data_is_rejected", test_trailing_data_is_rejected}

@@ -1,14 +1,23 @@
 #include "dbus/agent_registry.hpp"
 #include "dbus/interaction_registry.hpp"
+#include "dbus/secret_pipe.hpp"
 #include "test_runner.hpp"
 #include "uv/src/user_interaction.hpp"
 
+#include <algorithm>
 #include <chrono>
+#include <cerrno>
+#include <fcntl.h>
 #include <iostream>
+#include <span>
 #include <stop_token>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
+#include <unistd.h>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -19,6 +28,74 @@ namespace {
         return false; \
     } \
 } while(false)
+
+class TestFd {
+public:
+    explicit TestFd(int fd = -1) noexcept : fd_(fd) {}
+
+    ~TestFd() {
+        if(fd_ >= 0)
+            static_cast<void>(close(fd_));
+    }
+
+    TestFd(const TestFd&) = delete;
+    TestFd& operator=(const TestFd&) = delete;
+
+    TestFd(TestFd&& other) noexcept
+        : fd_(std::exchange(other.fd_, -1)) {}
+
+    TestFd& operator=(TestFd&& other) noexcept {
+        if(this != &other) {
+            reset();
+            fd_ = std::exchange(other.fd_, -1);
+        }
+        return *this;
+    }
+
+    [[nodiscard]] int get() const noexcept {
+        return fd_;
+    }
+
+    void reset(int fd = -1) noexcept {
+        if(fd_ >= 0)
+            static_cast<void>(close(fd_));
+        fd_ = fd;
+    }
+
+private:
+    int fd_;
+};
+
+vauth::uv::SensitiveBytes sensitive(std::string_view value) {
+    vauth::uv::SensitiveBytes result(value.size());
+    std::ranges::copy(value, result.writable_bytes().begin());
+    return result;
+}
+
+std::pair<TestFd, TestFd> make_pipe() {
+    int descriptors[2]{};
+    if(pipe2(descriptors, O_CLOEXEC) != 0)
+        throw std::runtime_error("Unable to create test pipe");
+    return {TestFd(descriptors[0]), TestFd(descriptors[1])};
+}
+
+void write_all(int fd, std::span<const uint8_t> bytes) {
+    std::size_t written = 0;
+    while(written < bytes.size()) {
+        const ssize_t count = write(
+            fd,
+            bytes.data() + written,
+            bytes.size() - written
+        );
+        if(count > 0) {
+            written += static_cast<std::size_t>(count);
+            continue;
+        }
+        if(count < 0 && errno == EINTR)
+            continue;
+        throw std::runtime_error("Unable to write test pipe");
+    }
+}
 
 vauth::dbus::AgentPeer peer(
     std::string bus_name = ":1.42",
@@ -352,6 +429,203 @@ bool test_presence_responses_and_cancellation() {
     return true;
 }
 
+bool test_password_responses() {
+    vauth::dbus::AgentRegistry agents;
+    vauth::dbus::InteractionRegistry interactions;
+    const UserContext user = agents.register_agent(peer());
+    const uint64_t request_id = interactions.begin(
+        user,
+        UserInteractionOperation::get_assertion,
+        "example.com"
+    );
+    CHECK(interactions.transition(
+        user,
+        request_id,
+        UserInteractionState::verification_started
+    ));
+
+    bool early_response_rejected = false;
+    try {
+        interactions.submit_password(
+            user,
+            request_id,
+            sensitive("too-early")
+        );
+    } catch(const std::runtime_error&) {
+        early_response_rejected = true;
+    }
+    CHECK(early_response_rejected);
+    CHECK(interactions.transition(
+        user,
+        request_id,
+        UserInteractionState::password_required
+    ));
+
+    UserContext wrong_user = user;
+    wrong_user.uid = 1001;
+    bool wrong_user_rejected = false;
+    try {
+        interactions.submit_password(
+            wrong_user,
+            request_id,
+            sensitive("foreign")
+        );
+    } catch(const std::runtime_error&) {
+        wrong_user_rejected = true;
+    }
+    CHECK(wrong_user_rejected);
+
+    std::jthread responder([&] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        interactions.submit_password(user, request_id, sensitive("secret"));
+    });
+    std::stop_source stop;
+    auto response = interactions.wait_for_password(
+        user,
+        request_id,
+        stop.get_token(),
+        std::chrono::seconds(1)
+    );
+    responder.join();
+    CHECK(response.status == vauth::dbus::PasswordWaitStatus::provided);
+    const std::vector<uint8_t> expected{'s', 'e', 'c', 'r', 'e', 't'};
+    CHECK(std::ranges::equal(response.password.bytes(), expected));
+
+    bool duplicate_rejected = false;
+    try {
+        interactions.submit_password(
+            user,
+            request_id,
+            sensitive("duplicate")
+        );
+    } catch(const std::runtime_error&) {
+        duplicate_rejected = true;
+    }
+    CHECK(duplicate_rejected);
+    CHECK(interactions.transition(
+        user,
+        request_id,
+        UserInteractionState::verification_succeeded
+    ));
+
+    const uint64_t cancelled_id = interactions.begin(
+        user,
+        UserInteractionOperation::make_credential,
+        "example.com"
+    );
+    CHECK(interactions.transition(
+        user,
+        cancelled_id,
+        UserInteractionState::verification_started
+    ));
+    CHECK(interactions.transition(
+        user,
+        cancelled_id,
+        UserInteractionState::password_required
+    ));
+    interactions.request_cancel(user, cancelled_id);
+    auto cancelled = interactions.wait_for_password(
+        user,
+        cancelled_id,
+        stop.get_token(),
+        std::chrono::seconds(1)
+    );
+    CHECK(
+        cancelled.status ==
+        vauth::dbus::PasswordWaitStatus::client_cancelled
+    );
+    CHECK(interactions.transition(
+        user,
+        cancelled_id,
+        UserInteractionState::cancelled
+    ));
+    return true;
+}
+
+bool test_password_pipe_validation() {
+    {
+        auto [read_end, write_end] = make_pipe();
+        const std::vector<uint8_t> expected{'s', 'e', 'c', 'r', 'e', 't'};
+        write_all(write_end.get(), expected);
+        write_end.reset();
+        auto password = vauth::dbus::read_secret_pipe(read_end.get());
+        CHECK(std::ranges::equal(password.bytes(), expected));
+    }
+
+    {
+        auto [read_end, write_end] = make_pipe();
+        const std::vector<uint8_t> incomplete{'x'};
+        write_all(write_end.get(), incomplete);
+        bool rejected = false;
+        try {
+            static_cast<void>(
+                vauth::dbus::read_secret_pipe(read_end.get())
+            );
+        } catch(const std::invalid_argument&) {
+            rejected = true;
+        }
+        CHECK(rejected);
+    }
+
+    {
+        auto [read_end, write_end] = make_pipe();
+        const std::vector<uint8_t> maximum(
+            vauth::uv::MAX_PASSWORD_SIZE,
+            'x'
+        );
+        write_all(write_end.get(), maximum);
+        write_end.reset();
+        auto password = vauth::dbus::read_secret_pipe(read_end.get());
+        CHECK(password.size() == vauth::uv::MAX_PASSWORD_SIZE);
+    }
+
+    {
+        auto [read_end, write_end] = make_pipe();
+        const std::vector<uint8_t> oversized(
+            vauth::uv::MAX_PASSWORD_SIZE + 1,
+            'x'
+        );
+        write_all(write_end.get(), oversized);
+        write_end.reset();
+        bool rejected = false;
+        try {
+            static_cast<void>(
+                vauth::dbus::read_secret_pipe(read_end.get())
+            );
+        } catch(const std::invalid_argument&) {
+            rejected = true;
+        }
+        CHECK(rejected);
+    }
+
+    {
+        auto [read_end, write_end] = make_pipe();
+        const std::vector<uint8_t> embedded_nul{'a', 0, 'b'};
+        write_all(write_end.get(), embedded_nul);
+        write_end.reset();
+        bool rejected = false;
+        try {
+            static_cast<void>(
+                vauth::dbus::read_secret_pipe(read_end.get())
+            );
+        } catch(const std::invalid_argument&) {
+            rejected = true;
+        }
+        CHECK(rejected);
+    }
+
+    TestFd regular(open("/dev/null", O_RDONLY | O_CLOEXEC));
+    CHECK(regular.get() >= 0);
+    bool regular_rejected = false;
+    try {
+        static_cast<void>(vauth::dbus::read_secret_pipe(regular.get()));
+    } catch(const std::invalid_argument&) {
+        regular_rejected = true;
+    }
+    CHECK(regular_rejected);
+    return true;
+}
+
 }
 
 int main() {
@@ -367,6 +641,11 @@ int main() {
     runner.run(
         "test_presence_responses_and_cancellation",
         test_presence_responses_and_cancellation
+    );
+    runner.run("test_password_responses", test_password_responses);
+    runner.run(
+        "test_password_pipe_validation",
+        test_password_pipe_validation
     );
     return runner.finish();
 }
