@@ -1,16 +1,11 @@
 #pragma once
 
-#include <cstdint>
+#include "user_context.hpp"
+
 #include <stop_token>
-#include <string>
 #include <string_view>
 
 class KeepaliveState;
-
-struct UserIdentity {
-    uint32_t uid;
-    std::string name;
-};
 
 enum class UserInteractionOperation {
     make_credential,
@@ -34,17 +29,17 @@ public:
 
     // Implementations report cancellation and deadline expiry with the
     // existing OperationCancelled and UserActionTimedOut exceptions.
-    [[nodiscard]] virtual UserIdentity current_user(
+    [[nodiscard]] virtual UserContext current_context(
         std::stop_token stop
     ) = 0;
     [[nodiscard]] virtual UserInteractionResult request_presence(
-        const UserIdentity& user,
+        const UserContext& user,
         const UserInteractionRequest& request,
         std::stop_token stop,
         KeepaliveState& keepalive
     ) = 0;
     [[nodiscard]] virtual UserInteractionResult request_verification(
-        const UserIdentity& user,
+        const UserContext& user,
         const UserInteractionRequest& request,
         std::stop_token stop,
         KeepaliveState& keepalive

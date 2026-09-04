@@ -23,11 +23,11 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(
 )
 {
     cancellation_point(stop);
-    const UserIdentity local_user = user_interaction.current_user(stop);
+    const UserContext user_context = user_interaction.current_context(stop);
     const auto available_credentials = store.find_for_assertion(
         rpId,
         allowList,
-        local_user.uid
+        user_context.uid
     );
     const auto number_of_credentials = static_cast<uint32_t>(
         available_credentials.size()
@@ -48,7 +48,7 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(
     switch(assertion_interaction(request_up, request_uv)) {
         case AssertionInteraction::Verification: {
             const auto verification = user_interaction.request_verification(
-                local_user,
+                user_context,
                 {
                     .operation = UserInteractionOperation::get_assertion,
                     .relyingPartyId = rpId
@@ -69,7 +69,7 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(
         case AssertionInteraction::Presence: {
             cancellation_point(stop);
             const auto presence = user_interaction.request_presence(
-                local_user,
+                user_context,
                 {
                     .operation = UserInteractionOperation::get_assertion,
                     .relyingPartyId = rpId
@@ -95,7 +95,7 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(
         cancellation_point(stop);
         auto payload = generate_single_credential_payload(
             credential,
-            local_user.uid,
+            user_context.uid,
             has_continuations
                 ? std::optional<uint32_t>(number_of_credentials)
                 : std::nullopt,
@@ -108,7 +108,7 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(
         if(has_continuations) {
             sequence.begin(
                 r.cid,
-                local_user.uid,
+                user_context,
                 {
                     available_credentials.begin() + 1,
                     available_credentials.end()
@@ -129,8 +129,8 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response_next(
     CredentialKeyProvider& key_provider,
     UserInteraction& user_interaction
 ) {
-    const UserIdentity local_user = user_interaction.current_user(stop);
-    auto cred_maybe = sequence.next(cid, local_user.uid);
+    const UserContext user_context = user_interaction.current_context(stop);
+    auto cred_maybe = sequence.next(cid, user_context);
     if(!cred_maybe.has_value()) {
         return {
             static_cast<uint8_t>(CTAPError::CTAP2_ERR_NOT_ALLOWED)
@@ -140,7 +140,7 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response_next(
     cancellation_point(stop);
     return generate_single_credential_payload(
         cred,
-        local_user.uid,
+        user_context.uid,
         std::nullopt,
         stop,
         store,

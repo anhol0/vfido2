@@ -20,7 +20,7 @@ CTAPGetAssertionRequest::validation_error() const noexcept {
 
 void AssertionSequence::begin(
     uint32_t origin_cid,
-    uint32_t owner_uid,
+    const UserContext& user_context,
     std::vector<StoredCredential> remaining_credentials,
     Clock::time_point now
 ) {
@@ -28,8 +28,8 @@ void AssertionSequence::begin(
     if(origin_cid == 0 || remaining_credentials.empty()) {
         return;
     }
-    if(std::ranges::any_of(remaining_credentials, [owner_uid](const auto& credential) {
-        return credential.ownerUid != owner_uid;
+    if(std::ranges::any_of(remaining_credentials, [&user_context](const auto& credential) {
+        return credential.ownerUid != user_context.uid;
     })) {
         throw std::invalid_argument(
             "Assertion sequence contains a credential owned by another user"
@@ -37,17 +37,20 @@ void AssertionSequence::begin(
     }
 
     originCid_ = origin_cid;
-    ownerUid_ = owner_uid;
+    ownerContext_ = user_context.binding();
     credentials_ = std::move(remaining_credentials);
     lastUse_ = now;
 }
 
 std::optional<StoredCredential> AssertionSequence::next(
     uint32_t cid,
-    uint32_t owner_uid,
+    const UserContext& user_context,
     Clock::time_point now
 ) {
-    if(originCid_ != 0 && owner_uid != ownerUid_) {
+    if(
+        originCid_ != 0 &&
+        (!ownerContext_ || user_context.binding() != *ownerContext_)
+    ) {
         clear();
         return std::nullopt;
     }
@@ -72,7 +75,7 @@ void AssertionSequence::clear() noexcept {
     credentials_.clear();
     index_ = 0;
     originCid_ = 0;
-    ownerUid_ = 0;
+    ownerContext_.reset();
     lastUse_ = {};
 }
 

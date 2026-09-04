@@ -12,17 +12,17 @@ public:
         std::string configuration_directory
     );
 
-    [[nodiscard]] UserIdentity current_user(
+    [[nodiscard]] UserContext current_context(
         std::stop_token stop
     ) override;
     [[nodiscard]] UserInteractionResult request_presence(
-        const UserIdentity& user,
+        const UserContext& user,
         const UserInteractionRequest& request,
         std::stop_token stop,
         KeepaliveState& keepalive
     ) override;
     [[nodiscard]] UserInteractionResult request_verification(
-        const UserIdentity& user,
+        const UserContext& user,
         const UserInteractionRequest& request,
         std::stop_token stop,
         KeepaliveState& keepalive

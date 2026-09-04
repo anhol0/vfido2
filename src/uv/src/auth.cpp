@@ -116,7 +116,7 @@ bool collect_consent(
     }
 }
 
-UserIdentity get_local_user_identity() {
+UserContext get_local_user_context() {
     const char* name = getlogin();
     if(name == nullptr)
         throw std::runtime_error("Unable to get current user name");
@@ -147,9 +147,10 @@ UserIdentity get_local_user_identity() {
         throw std::runtime_error("Current user UID is out of range");
     }
 
-    return UserIdentity{
+    return UserContext{
         .uid = static_cast<uint32_t>(account.pw_uid),
-        .name = username
+        .name = username,
+        .session = std::nullopt
     };
 }
 
@@ -163,15 +164,15 @@ PamUserInteraction::PamUserInteraction(
     configurationDirectory_(std::move(configuration_directory))
 {}
 
-UserIdentity PamUserInteraction::current_user(std::stop_token stop) {
+UserContext PamUserInteraction::current_context(std::stop_token stop) {
     cancellation_point(stop);
-    auto user = get_local_user_identity();
+    auto user = get_local_user_context();
     cancellation_point(stop);
     return user;
 }
 
 UserInteractionResult PamUserInteraction::request_presence(
-    const UserIdentity& user,
+    const UserContext& user,
     const UserInteractionRequest& request,
     std::stop_token stop,
     KeepaliveState& keepalive
@@ -185,7 +186,7 @@ UserInteractionResult PamUserInteraction::request_presence(
 }
 
 UserInteractionResult PamUserInteraction::request_verification(
-    const UserIdentity& user,
+    const UserContext& user,
     const UserInteractionRequest& request,
     std::stop_token stop,
     KeepaliveState& keepalive

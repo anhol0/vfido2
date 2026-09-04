@@ -27,18 +27,18 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(
     KeepaliveState& keepalive
 ) {
     cancellation_point(stop);
-    const UserIdentity local_user = user_interaction.current_user(stop);
+    const UserContext user_context = user_interaction.current_context(stop);
     if(!excludeList.empty()) {
         for(const auto &d : excludeList) {
             if(
                 d.type == "public-key" &&
-                store.has_for_rp(d.id, rp.id, local_user.uid)
+                store.has_for_rp(d.id, rp.id, user_context.uid)
             ) {
                 // Do not reveal that this RP already has a credential until
                 // the user-presence ceremony required by CTAP has completed.
                 cancellation_point(stop);
                 const auto presence = user_interaction.request_presence(
-                    local_user,
+                    user_context,
                     {
                         .operation = UserInteractionOperation::check_excluded_credential,
                         .relyingPartyId = rp.id
@@ -86,7 +86,7 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(
     for(auto [name, option] : options) {
         if(name == "uv" && option == true) {
             const auto verification = user_interaction.request_verification(
-                local_user,
+                user_context,
                 {
                     .operation = UserInteractionOperation::make_credential,
                     .relyingPartyId = rp.id
@@ -101,7 +101,7 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(
         } else if (name == "uv" && option == false) {
             cancellation_point(stop);
             const auto presence = user_interaction.request_presence(
-                local_user,
+                user_context,
                 {
                     .operation = UserInteractionOperation::make_credential,
                     .relyingPartyId = rp.id
@@ -193,7 +193,7 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(
     // Do not save dummy credentials to the store if it's a make.me.blink ping
     if (rp.id != "make.me.blink" && rp.id != ".dummy") {
         cancellation_point(stop);
-        store.put(credential, local_user.uid);
+        store.put(credential, user_context.uid);
     }
     return payload;
 }

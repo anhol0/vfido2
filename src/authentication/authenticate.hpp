@@ -14,6 +14,7 @@
 #include "uhid_report.hpp"
 #include "credentials/credential.hpp"
 #include "error.hpp"
+#include "uv/src/user_context.hpp"
 
 class CredentialKeyProvider;
 class KeepaliveState;
@@ -61,13 +62,13 @@ public:
 
     void begin(
         uint32_t origin_cid,
-        uint32_t owner_uid,
+        const UserContext& user_context,
         std::vector<StoredCredential> remaining_credentials,
         Clock::time_point now = Clock::now()
     );
     [[nodiscard]] std::optional<StoredCredential> next(
         uint32_t cid,
-        uint32_t owner_uid,
+        const UserContext& user_context,
         Clock::time_point now = Clock::now()
     );
     void clear() noexcept;
@@ -80,7 +81,7 @@ private:
     std::vector<StoredCredential> credentials_;
     std::size_t index_ = 0;
     uint32_t originCid_ = 0;
-    uint32_t ownerUid_ = 0;
+    std::optional<UserContextBinding> ownerContext_;
     Clock::time_point lastUse_{};
 };
 
