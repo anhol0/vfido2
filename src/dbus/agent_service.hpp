@@ -38,6 +38,12 @@ public:
         std::stop_token stop,
         std::chrono::steady_clock::duration timeout
     ) override;
+    [[nodiscard]] vauth::uv::SensitiveBytes wait_for_password(
+        const UserContext& user,
+        const UserInteractionRequest& request,
+        std::stop_token stop,
+        std::chrono::steady_clock::duration timeout
+    ) override;
     [[nodiscard]] bool cancellation_requested(
         const UserContext& user,
         const UserInteractionRequest& request

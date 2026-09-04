@@ -1,5 +1,6 @@
 #pragma once
 
+#include "sensitive_bytes.hpp"
 #include "user_context.hpp"
 
 #include <chrono>
@@ -109,6 +110,12 @@ public:
         const UserInteractionRequest& request
     ) noexcept = 0;
     [[nodiscard]] virtual UserInteractionResult wait_for_presence(
+        const UserContext& user,
+        const UserInteractionRequest& request,
+        std::stop_token stop,
+        std::chrono::steady_clock::duration timeout
+    ) = 0;
+    [[nodiscard]] virtual vauth::uv::SensitiveBytes wait_for_password(
         const UserContext& user,
         const UserInteractionRequest& request,
         std::stop_token stop,

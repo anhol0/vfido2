@@ -1,5 +1,6 @@
 #include "auth_handler.hpp"
 #include "auth_handler_status.hpp"
+#include "sensitive_bytes.hpp"
 
 #include <security/_pam_types.h>
 #include <security/pam_appl.h>
@@ -11,6 +12,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fcntl.h>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -117,6 +119,44 @@ int read_response(const pam_message& message, bool hide, char** response) {
 
     if(hide) {
         send_status(vauth::uv::AuthHandlerStatus::password_required);
+        if(
+            fcntl(vauth::uv::AUTH_HANDLER_RESPONSE_FD, F_GETFD) >= 0
+        ) {
+            std::array<char, vauth::uv::MAX_PASSWORD_SIZE + 1> input{};
+            std::size_t used = 0;
+            while(true) {
+                const ssize_t count = read(
+                    vauth::uv::AUTH_HANDLER_RESPONSE_FD,
+                    input.data() + used,
+                    input.size() - used
+                );
+                if(count > 0) {
+                    used += static_cast<std::size_t>(count);
+                    if(used > vauth::uv::MAX_PASSWORD_SIZE) {
+                        explicit_bzero(input.data(), input.size());
+                        return PAM_CONV_ERR;
+                    }
+                    continue;
+                }
+                if(count == 0)
+                    break;
+                if(errno == EINTR)
+                    continue;
+                explicit_bzero(input.data(), input.size());
+                return PAM_CONV_ERR;
+            }
+            if(std::memchr(input.data(), '\0', used) != nullptr) {
+                explicit_bzero(input.data(), input.size());
+                return PAM_CONV_ERR;
+            }
+            input[used] = '\0';
+            char* copy = ::strdup(input.data());
+            explicit_bzero(input.data(), input.size());
+            if(copy == nullptr)
+                return PAM_BUF_ERR;
+            *response = copy;
+            return PAM_SUCCESS;
+        }
     }
 
     TerminalState terminal;

@@ -64,41 +64,68 @@ private:
     int fd_ = -1;
 };
 
-struct StatusPipe {
+struct Pipe {
     UniqueFd read;
     UniqueFd write;
 };
 
-StatusPipe make_status_pipe() {
+Pipe make_pipe(int flags, const char* operation) {
     std::array<int, 2> descriptors{};
-    if(pipe2(descriptors.data(), O_CLOEXEC | O_NONBLOCK) != 0) {
+    if(pipe2(descriptors.data(), flags) != 0) {
         throw std::system_error(
             errno,
             std::generic_category(),
-            "pipe2 authentication status"
+            operation
         );
     }
 
-    StatusPipe pipe{
+    return {
         .read = UniqueFd(descriptors[0]),
         .write = UniqueFd(descriptors[1])
     };
-    if(pipe.write.get() == AUTH_HANDLER_STATUS_FD) {
+}
+
+void move_above_auth_descriptors(UniqueFd& descriptor) {
+    if(
+        descriptor.get() == AUTH_HANDLER_STATUS_FD ||
+        descriptor.get() == AUTH_HANDLER_RESPONSE_FD
+    ) {
         const int duplicate = fcntl(
-            pipe.write.get(),
+            descriptor.get(),
             F_DUPFD_CLOEXEC,
-            AUTH_HANDLER_STATUS_FD + 1
+            AUTH_HANDLER_RESPONSE_FD + 1
         );
         if(duplicate < 0) {
             throw std::system_error(
                 errno,
                 std::generic_category(),
-                "duplicate authentication status descriptor"
+                "duplicate authentication pipe descriptor"
             );
         }
-        pipe.write.reset(duplicate);
+        descriptor.reset(duplicate);
     }
-    return pipe;
+}
+
+void write_password(int fd, std::span<const uint8_t> password) {
+    std::size_t written = 0;
+    while(written < password.size()) {
+        const ssize_t count = write(
+            fd,
+            password.data() + written,
+            password.size() - written
+        );
+        if(count > 0) {
+            written += static_cast<std::size_t>(count);
+            continue;
+        }
+        if(count < 0 && errno == EINTR)
+            continue;
+        throw std::system_error(
+            count < 0 ? errno : EIO,
+            std::generic_category(),
+            "write authentication password"
+        );
+    }
 }
 
 void drain_statuses(
@@ -153,12 +180,11 @@ private:
 
 class SpawnFileActions {
 public:
-    explicit SpawnFileActions(int status_write_fd) {
+    SpawnFileActions(int status_write_fd, int response_read_fd) {
         int rc = posix_spawn_file_actions_init(&actions_);
         if(rc != 0)
             throw std::system_error(rc, std::generic_category(), "posix_spawn_file_actions_init");
 
-        int close_from = STDERR_FILENO + 1;
         if(status_write_fd >= 0) {
             rc = posix_spawn_file_actions_adddup2(
                 &actions_,
@@ -173,9 +199,29 @@ public:
                     "posix_spawn_file_actions_adddup2"
                 );
             }
-            close_from = AUTH_HANDLER_STATUS_FD + 1;
         }
 
+        if(response_read_fd >= 0) {
+            rc = posix_spawn_file_actions_adddup2(
+                &actions_,
+                response_read_fd,
+                AUTH_HANDLER_RESPONSE_FD
+            );
+            if(rc != 0) {
+                posix_spawn_file_actions_destroy(&actions_);
+                throw std::system_error(
+                    rc,
+                    std::generic_category(),
+                    "posix_spawn_file_actions_adddup2"
+                );
+            }
+        }
+
+        int close_from = STDERR_FILENO + 1;
+        if(status_write_fd >= 0)
+            close_from = AUTH_HANDLER_STATUS_FD + 1;
+        if(response_read_fd >= 0)
+            close_from = AUTH_HANDLER_RESPONSE_FD + 1;
         rc = posix_spawn_file_actions_addclosefrom_np(
             &actions_,
             close_from
@@ -271,7 +317,8 @@ int run_cancellable_program(
     std::stop_token stop,
     std::chrono::steady_clock::duration timeout,
     const std::function<void(uint8_t)>& status_callback,
-    const std::function<bool()>& cancellation_requested
+    const std::function<bool()>& cancellation_requested,
+    const std::function<SensitiveBytes()>& password_callback
 ) {
     cancellation_point(stop);
     if(cancellation_requested && cancellation_requested())
@@ -290,13 +337,28 @@ int run_cancellable_program(
         argv.push_back(const_cast<char*>(argument.c_str()));
     argv.push_back(nullptr);
 
-    std::optional<StatusPipe> status_pipe;
-    if(status_callback)
-        status_pipe.emplace(make_status_pipe());
+    std::optional<Pipe> status_pipe;
+    if(status_callback || password_callback) {
+        status_pipe.emplace(make_pipe(
+            O_CLOEXEC | O_NONBLOCK,
+            "pipe2 authentication status"
+        ));
+        move_above_auth_descriptors(status_pipe->write);
+    }
+
+    std::optional<Pipe> response_pipe;
+    if(password_callback) {
+        response_pipe.emplace(make_pipe(
+            O_CLOEXEC,
+            "pipe2 authentication response"
+        ));
+        move_above_auth_descriptors(response_pipe->read);
+    }
 
     SpawnAttributes attributes;
     SpawnFileActions file_actions(
-        status_pipe ? status_pipe->write.get() : -1
+        status_pipe ? status_pipe->write.get() : -1,
+        response_pipe ? response_pipe->read.get() : -1
     );
     int rc = posix_spawnattr_setpgroup(attributes.get(), 0);
     if(rc != 0)
@@ -319,6 +381,8 @@ int run_cancellable_program(
 
     if(status_pipe)
         status_pipe->write.reset();
+    if(response_pipe)
+        response_pipe->read.reset();
 
     ChildProcess child(pid);
     std::mutex wait_mutex;
@@ -329,8 +393,30 @@ int run_cancellable_program(
     std::unique_lock wait_lock(wait_mutex);
 
     while(true) {
-        if(status_pipe)
-            drain_statuses(status_pipe->read.get(), status_callback);
+        if(status_pipe) {
+            drain_statuses(status_pipe->read.get(), [&](uint8_t status) {
+                if(status_callback)
+                    status_callback(status);
+                if(
+                    status == static_cast<uint8_t>(
+                        AuthHandlerStatus::password_required
+                    ) &&
+                    password_callback
+                ) {
+                    if(!response_pipe || response_pipe->write.get() < 0) {
+                        throw std::runtime_error(
+                            "Authentication password was requested twice"
+                        );
+                    }
+                    auto password = password_callback();
+                    write_password(
+                        response_pipe->write.get(),
+                        password.bytes()
+                    );
+                    response_pipe->write.reset();
+                }
+            });
+        }
         if(stop.stop_requested()) {
             child.terminate_and_reap();
             throw OperationCancelled{};
@@ -340,8 +426,12 @@ int run_cancellable_program(
             throw UserInteractionCancelled{};
         }
         if(const auto status = child.poll()) {
-            if(status_pipe)
-                drain_statuses(status_pipe->read.get(), status_callback);
+            if(status_pipe) {
+                drain_statuses(status_pipe->read.get(), [&](uint8_t status) {
+                    if(status_callback)
+                        status_callback(status);
+                });
+            }
             return *status;
         }
 

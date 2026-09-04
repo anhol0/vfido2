@@ -8,6 +8,7 @@
 
 #include <chrono>
 #include <cerrno>
+#include <functional>
 #include <limits>
 #include <pwd.h>
 #include <security/_pam_types.h>
@@ -121,6 +122,28 @@ int authenticate_user(
     // daemon's original terminal state if cancellation requires SIGKILL.
     TerminalStateRestorer terminal;
     UserActionKeepaliveGuard waiting_for_user(keepalive);
+    const auto deadline = std::chrono::steady_clock::now() +
+        USER_ACTION_TIMEOUT;
+    std::function<vauth::uv::SensitiveBytes()> password_callback;
+    if(interaction_channel != nullptr && request.requestId != 0) {
+        password_callback = [
+            interaction_channel,
+            &user,
+            &request,
+            stop,
+            deadline
+        ] {
+            const auto now = std::chrono::steady_clock::now();
+            if(now >= deadline)
+                throw UserActionTimedOut{};
+            return interaction_channel->wait_for_password(
+                user,
+                request,
+                stop,
+                deadline - now
+            );
+        };
+    }
     const int status = vauth::uv::run_cancellable_program(
         "/proc/self/exe",
         {
@@ -164,7 +187,8 @@ int authenticate_user(
                 interaction_channel != nullptr &&
                 request.requestId != 0 &&
                 interaction_channel->cancellation_requested(user, request);
-        }
+        },
+        password_callback
     );
     if(status < PAM_SUCCESS || status > PAM_INCOMPLETE)
         return PAM_SYSTEM_ERR;

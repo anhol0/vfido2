@@ -110,7 +110,7 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(
                 };
             }
             if(verification != UserInteractionResult::approved) {
-                return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_UV_BLOCKED)};
+                return {static_cast<uint8_t>(ctap20_uv_failure_error())};
             } else { break; }
         } else if (name == "uv" && option == false) {
             cancellation_point(stop);

@@ -5,6 +5,7 @@
 namespace vauth::uv {
 
 inline constexpr int AUTH_HANDLER_STATUS_FD = 3;
+inline constexpr int AUTH_HANDLER_RESPONSE_FD = 4;
 
 enum class AuthHandlerStatus : uint8_t {
     fingerprint_required = 1,

@@ -59,6 +59,10 @@ enum class CTAPError : uint8_t {
     CTAP2_ERR_VENDOR_LAST                = 0xFF
 };
 
+[[nodiscard]] constexpr CTAPError ctap20_uv_failure_error() noexcept {
+    return CTAPError::CTAP2_ERR_OPERATION_DENIED;
+}
+
 enum class HIDError : uint8_t {
     CTAP1_ERR_SUCCESS                    = 0x00,
     CTAP1_ERR_INVALID_COMMAND            = 0x01,

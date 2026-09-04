@@ -110,9 +110,11 @@ uint64_t InteractionRegistry::begin(
         .relyingPartyId = std::string(relying_party_id),
         .state = std::nullopt,
         .presenceResponse = std::nullopt,
+        .passwordSubmitted = false,
         .cancelRequested = false,
         .responseClosed = false
     };
+    passwordResponse_.reset();
     return request_id;
 }
 
@@ -142,6 +144,7 @@ bool InteractionRegistry::transition(
     current_->state = state;
     if(is_terminal(state)) {
         current_.reset();
+        passwordResponse_.reset();
         condition_.notify_all();
     }
     return true;
@@ -165,6 +168,28 @@ void InteractionRegistry::respond_to_presence(
     }
     current_->presenceResponse = approved;
     current_->responseClosed = true;
+    condition_.notify_all();
+}
+
+void InteractionRegistry::submit_password(
+    const UserContext& user,
+    uint64_t request_id,
+    vauth::uv::SensitiveBytes password
+) {
+    std::lock_guard lock(mutex_);
+    if(
+        request_id == 0 ||
+        !current_ ||
+        current_->requestId != request_id ||
+        !same_user(current_->user, user) ||
+        current_->state != UserInteractionState::password_required ||
+        current_->passwordSubmitted ||
+        current_->cancelRequested
+    ) {
+        throw std::runtime_error("Password response is not currently accepted");
+    }
+    current_->passwordSubmitted = true;
+    passwordResponse_.emplace(std::move(password));
     condition_.notify_all();
 }
 
@@ -230,6 +255,48 @@ PresenceWaitResult InteractionRegistry::wait_for_presence(
     }
 }
 
+PasswordWaitResult InteractionRegistry::wait_for_password(
+    const UserContext& user,
+    uint64_t request_id,
+    std::stop_token stop,
+    std::chrono::steady_clock::duration timeout
+) {
+    if(timeout <= std::chrono::steady_clock::duration::zero())
+        throw std::invalid_argument("Password timeout must be positive");
+
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    std::unique_lock lock(mutex_);
+    std::stop_callback wake_on_stop(stop, [this] {
+        condition_.notify_all();
+    });
+
+    while(true) {
+        if(
+            !current_ ||
+            current_->requestId != request_id ||
+            !same_user(current_->user, user)
+        ) {
+            return {PasswordWaitStatus::invalidated, {}};
+        }
+        if(stop.stop_requested()) {
+            current_->responseClosed = true;
+            return {PasswordWaitStatus::platform_cancelled, {}};
+        }
+        if(current_->cancelRequested)
+            return {PasswordWaitStatus::client_cancelled, {}};
+        if(passwordResponse_) {
+            vauth::uv::SensitiveBytes password = std::move(*passwordResponse_);
+            passwordResponse_.reset();
+            return {PasswordWaitStatus::provided, std::move(password)};
+        }
+        if(std::chrono::steady_clock::now() >= deadline) {
+            current_->responseClosed = true;
+            return {PasswordWaitStatus::timed_out, {}};
+        }
+        condition_.wait_until(lock, deadline);
+    }
+}
+
 bool InteractionRegistry::cancellation_requested(
     const UserContext& user,
     uint64_t request_id
@@ -262,6 +329,7 @@ bool InteractionRegistry::end(
             return false;
         }
         current_.reset();
+        passwordResponse_.reset();
         condition_.notify_all();
         return true;
     } catch(...) {
@@ -276,6 +344,7 @@ void InteractionRegistry::clear_for(
         std::lock_guard lock(mutex_);
         if(current_ && same_user(current_->user, user)) {
             current_.reset();
+            passwordResponse_.reset();
             condition_.notify_all();
         }
     } catch(...) {

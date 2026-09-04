@@ -4,6 +4,7 @@
 #include "cancellation.hpp"
 #include "constants.hpp"
 #include "interaction_registry.hpp"
+#include "secret_pipe.hpp"
 
 #include <sdbus-c++/sdbus-c++.h>
 #include <systemd/sd-login.h>
@@ -261,6 +262,19 @@ public:
             respond_to_presence(std::move(call));
         };
 
+        auto password_method = sdbus::registerMethod(
+            std::string(SUBMIT_PASSWORD_METHOD)
+        );
+        password_method.inputSignature = sdbus::Signature{"tth"};
+        password_method.inputParamNames = {
+            "generation",
+            "requestId",
+            "passwordPipe"
+        };
+        password_method.callbackHandler = [this](sdbus::MethodCall call) {
+            submit_password(std::move(call));
+        };
+
         auto cancel_method = sdbus::registerMethod(
             std::string(CANCEL_INTERACTION_METHOD)
         );
@@ -274,6 +288,7 @@ public:
             std::move(register_method),
             std::move(unregister_method),
             std::move(presence_method),
+            std::move(password_method),
             std::move(cancel_method),
             std::move(state_signal)
         ).forInterface(std::string(INTERFACE_NAME), sdbus::return_slot);
@@ -411,6 +426,33 @@ public:
         throw std::logic_error("Unknown presence response state");
     }
 
+    [[nodiscard]] vauth::uv::SensitiveBytes wait_for_password(
+        const UserContext& user,
+        const UserInteractionRequest& request,
+        std::stop_token stop,
+        std::chrono::steady_clock::duration timeout
+    ) {
+        throw_if_failed();
+        auto result = interactions_.wait_for_password(
+            user,
+            request.requestId,
+            stop,
+            timeout
+        );
+        switch(result.status) {
+            case PasswordWaitStatus::provided:
+                return std::move(result.password);
+            case PasswordWaitStatus::timed_out:
+                throw UserActionTimedOut{};
+            case PasswordWaitStatus::client_cancelled:
+                throw UserInteractionCancelled{};
+            case PasswordWaitStatus::platform_cancelled:
+            case PasswordWaitStatus::invalidated:
+                throw OperationCancelled{};
+        }
+        throw std::logic_error("Unknown password response state");
+    }
+
     [[nodiscard]] bool cancellation_requested(
         const UserContext& user,
         const UserInteractionRequest& request
@@ -465,6 +507,37 @@ private:
 #ifdef DEBUG
             std::cerr << ANSI_PURPLE
                       << "D-Bus: received RespondToPresence"
+                      << ANSI_RESET << '\n';
+#endif
+        } catch(const std::exception& error) {
+            try {
+                call.createErrorReply(sdbus::Error{
+                    sdbus::Error::Name{
+                        "org.lamellix.vAuth.Error.InvalidInteraction"
+                    },
+                    error.what()
+                }).send();
+            } catch(...) {
+            }
+        }
+    }
+
+    void submit_password(sdbus::MethodCall call) noexcept {
+        try {
+            uint64_t generation = 0;
+            uint64_t request_id = 0;
+            sdbus::UnixFd password_pipe;
+            call >> generation >> request_id >> password_pipe;
+            const UserContext user = registered_caller(call, generation);
+            interactions_.submit_password(
+                user,
+                request_id,
+                read_secret_pipe(password_pipe.get())
+            );
+            call.createReply().send();
+#ifdef DEBUG
+            std::cerr << ANSI_PURPLE
+                      << "D-Bus: received SubmitPassword"
                       << ANSI_RESET << '\n';
 #endif
         } catch(const std::exception& error) {
@@ -772,6 +845,15 @@ UserInteractionResult AgentService::wait_for_presence(
     std::chrono::steady_clock::duration timeout
 ) {
     return impl_->wait_for_presence(user, request, stop, timeout);
+}
+
+vauth::uv::SensitiveBytes AgentService::wait_for_password(
+    const UserContext& user,
+    const UserInteractionRequest& request,
+    std::stop_token stop,
+    std::chrono::steady_clock::duration timeout
+) {
+    return impl_->wait_for_password(user, request, stop, timeout);
 }
 
 bool AgentService::cancellation_requested(

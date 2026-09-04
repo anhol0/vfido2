@@ -1,5 +1,7 @@
 #pragma once
 
+#include "sensitive_bytes.hpp"
+
 #include <chrono>
 #include <cstdint>
 #include <functional>
@@ -17,7 +19,8 @@ int run_cancellable_program(
     std::stop_token stop,
     std::chrono::steady_clock::duration timeout,
     const std::function<void(uint8_t)>& status_callback = {},
-    const std::function<bool()>& cancellation_requested = {}
+    const std::function<bool()>& cancellation_requested = {},
+    const std::function<SensitiveBytes()>& password_callback = {}
 );
 
 }
