@@ -6,6 +6,7 @@
 
 class CredentialKeyProvider;
 class KeepaliveState;
+class UserInteraction;
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -65,6 +66,7 @@ class CTAPMakeCredentialRequest {
             std::stop_token stop,
             CredentialStore& store,
             CredentialKeyProvider& key_provider,
+            UserInteraction& user_interaction,
             KeepaliveState& keepalive
         );
     private:

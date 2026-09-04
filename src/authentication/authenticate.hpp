@@ -17,6 +17,7 @@
 
 class CredentialKeyProvider;
 class KeepaliveState;
+class UserInteraction;
 
 enum class AssertionInteraction {
     None,
@@ -99,13 +100,15 @@ public:
         std::stop_token stop,
         CredentialStore& store,
         CredentialKeyProvider& key_provider,
+        UserInteraction& user_interaction,
         KeepaliveState& keepalive
     );
     std::vector<uint8_t> build_response_next(
         uint32_t cid,
         std::stop_token stop,
         CredentialStore& store,
-        CredentialKeyProvider& key_provider
+        CredentialKeyProvider& key_provider,
+        UserInteraction& user_interaction
     );
     void clear() {
         rpId.clear();

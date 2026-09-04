@@ -168,7 +168,8 @@ namespace {
 void run(
     FIDODevice& device,
     CredentialStore& store,
-    CredentialKeyProvider& key_provider
+    CredentialKeyProvider& key_provider,
+    UserInteraction& user_interaction
 ) {
 #ifdef DEBUG
     // Showing
@@ -362,6 +363,7 @@ void run(
                                 &completion,
                                 &store,
                                 &key_provider,
+                                &user_interaction,
                                 keepalive
                             ]
                             (std::stop_token stop) mutable
@@ -376,6 +378,7 @@ void run(
                                     stop,
                                     store,
                                     key_provider,
+                                    user_interaction,
                                     *keepalive
                                 );
                             } catch (const OperationCancelled&) {

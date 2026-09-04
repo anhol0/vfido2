@@ -11,18 +11,19 @@
 #include "cryptography/tpm.hpp"
 #include "error.hpp"
 #include "cryptography/crypto.hpp"
-#include "uv/src/auth.hpp"
+#include "uv/src/user_interaction.hpp"
 
 std::vector<uint8_t> CTAPGetAssertionRequest::build_response(
     UHIDReport& r,
     std::stop_token stop,
     CredentialStore& store,
     CredentialKeyProvider& key_provider,
+    UserInteraction& user_interaction,
     KeepaliveState& keepalive
 )
 {
     cancellation_point(stop);
-    const LocalUserIdentity local_user = get_local_user_identity();
+    const UserIdentity local_user = user_interaction.current_user(stop);
     const auto available_credentials = store.find_for_assertion(
         rpId,
         allowList,
@@ -46,19 +47,17 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(
     );
     switch(assertion_interaction(request_up, request_uv)) {
         case AssertionInteraction::Verification: {
-            const std::string procname = "vfido";
-
-#ifdef DEBUG
-                const std::string confdir = "../config";
-#else
-                const std::string confdir = "/etc/vfido2/config";
- #endif
-
-            const int rc = authenticate_user(
-                local_user.name, procname, confdir, stop, keepalive
+            const auto verification = user_interaction.request_verification(
+                local_user,
+                {
+                    .operation = UserInteractionOperation::get_assertion,
+                    .relyingPartyId = rpId
+                },
+                stop,
+                keepalive
             );
             cancellation_point(stop);
-            if(rc != 0) {
+            if(verification != UserInteractionResult::approved) {
                 return {
                     static_cast<uint8_t>(CTAPError::CTAP2_ERR_UV_INVALID)
                 };
@@ -69,14 +68,18 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response(
         }
         case AssertionInteraction::Presence: {
             cancellation_point(stop);
-            const bool consent = collect_consent(
-                "Authorize passkey usage?",
+            const auto presence = user_interaction.request_presence(
+                local_user,
+                {
+                    .operation = UserInteractionOperation::get_assertion,
+                    .relyingPartyId = rpId
+                },
                 stop,
                 keepalive
             );
             cancellation_point(stop);
 
-            if(!consent) {
+            if(presence != UserInteractionResult::approved) {
                 return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_OPERATION_DENIED)};
             }
             userPresent = true;
@@ -123,9 +126,10 @@ std::vector<uint8_t> CTAPGetAssertionRequest::build_response_next(
     uint32_t cid,
     std::stop_token stop,
     CredentialStore& store,
-    CredentialKeyProvider& key_provider
+    CredentialKeyProvider& key_provider,
+    UserInteraction& user_interaction
 ) {
-    const LocalUserIdentity local_user = get_local_user_identity();
+    const UserIdentity local_user = user_interaction.current_user(stop);
     auto cred_maybe = sequence.next(cid, local_user.uid);
     if(!cred_maybe.has_value()) {
         return {

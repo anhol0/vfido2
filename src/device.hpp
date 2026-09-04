@@ -19,6 +19,7 @@
 
 class CredentialKeyProvider;
 class KeepaliveState;
+class UserInteraction;
 
 class FIDODevice {
 public:
@@ -44,6 +45,7 @@ CTAPPacket execute_ctap_request(
     std::stop_token stop,
     CredentialStore& store,
     CredentialKeyProvider& key_provider,
+    UserInteraction& user_interaction,
     KeepaliveState& keepalive
 );
 CTAPPacket make_hid_error(uint32_t cid, HIDError error);

@@ -118,10 +118,18 @@ CTAPPacket execute_ctap_request(
     std::stop_token stop,
     CredentialStore& store,
     CredentialKeyProvider& key_provider,
+    UserInteraction& user_interaction,
     KeepaliveState& keepalive
 ) {
     cancellation_point(stop);
-    return handle_cbor(report, stop, store, key_provider, keepalive);
+    return handle_cbor(
+        report,
+        stop,
+        store,
+        key_provider,
+        user_interaction,
+        keepalive
+    );
 }
 
 std::vector<uhid_event> frame_packet(CTAPPacket &packet) {

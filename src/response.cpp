@@ -75,6 +75,7 @@ CTAPPacket handle_cbor(
     std::stop_token stop,
     CredentialStore& store,
     CredentialKeyProvider& key_provider,
+    UserInteraction& user_interaction,
     KeepaliveState& keepalive
 ) {
     CTAPPacket packet;
@@ -108,7 +109,12 @@ CTAPPacket handle_cbor(
         // Building the response
         try {
             payload = mcr.build_response(
-                request, stop, store, key_provider, keepalive
+                request,
+                stop,
+                store,
+                key_provider,
+                user_interaction,
+                keepalive
             );
         } catch (const OperationCancelled&) {
             throw;
@@ -144,7 +150,12 @@ CTAPPacket handle_cbor(
             }
             try {
                 payload = gar.build_response(
-                    request, stop, store, key_provider, keepalive
+                    request,
+                    stop,
+                    store,
+                    key_provider,
+                    user_interaction,
+                    keepalive
                 );
             } catch (const OperationCancelled&) {
                 gar.clear();
@@ -174,7 +185,11 @@ CTAPPacket handle_cbor(
 
             try {
                 payload = gar.build_response_next(
-                    request.cid, stop, store, key_provider
+                    request.cid,
+                    stop,
+                    store,
+                    key_provider,
+                    user_interaction
                 );
             } catch (const OperationCancelled&) {
                 gar.clear();

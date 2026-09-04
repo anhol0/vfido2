@@ -12,9 +12,11 @@
 #include <security/_pam_types.h>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <termios.h>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -52,8 +54,6 @@ std::string zenity_program() {
     throw std::runtime_error("zenity executable was not found");
 }
 
-}
-
 int authenticate_user(
     const std::string& username,
     const std::string& process_name,
@@ -81,8 +81,20 @@ int authenticate_user(
     return status;
 }
 
+std::string_view presence_question(UserInteractionOperation operation) {
+    switch(operation) {
+        case UserInteractionOperation::make_credential:
+            return "Authorize passkey creation?";
+        case UserInteractionOperation::get_assertion:
+            return "Authorize passkey usage?";
+        case UserInteractionOperation::check_excluded_credential:
+            return "Confirm user presence to continue passkey registration?";
+    }
+    return "Authorize passkey operation?";
+}
+
 bool collect_consent(
-    const std::string& question,
+    std::string_view question,
     std::stop_token stop,
     KeepaliveState& keepalive
 ) {
@@ -91,7 +103,7 @@ bool collect_consent(
         UserActionKeepaliveGuard waiting_for_user(keepalive);
         return vfido::uv::run_cancellable_program(
             program,
-            {"--question", "--text=" + question},
+            {"--question", "--text=" + std::string(question)},
             stop,
             USER_ACTION_TIMEOUT
         ) == 0;
@@ -104,7 +116,7 @@ bool collect_consent(
     }
 }
 
-LocalUserIdentity get_local_user_identity() {
+UserIdentity get_local_user_identity() {
     const char* name = getlogin();
     if(name == nullptr)
         throw std::runtime_error("Unable to get current user name");
@@ -135,8 +147,57 @@ LocalUserIdentity get_local_user_identity() {
         throw std::runtime_error("Current user UID is out of range");
     }
 
-    return LocalUserIdentity{
+    return UserIdentity{
         .uid = static_cast<uint32_t>(account.pw_uid),
         .name = username
     };
+}
+
+}
+
+PamUserInteraction::PamUserInteraction(
+    std::string process_name,
+    std::string configuration_directory
+) :
+    processName_(std::move(process_name)),
+    configurationDirectory_(std::move(configuration_directory))
+{}
+
+UserIdentity PamUserInteraction::current_user(std::stop_token stop) {
+    cancellation_point(stop);
+    auto user = get_local_user_identity();
+    cancellation_point(stop);
+    return user;
+}
+
+UserInteractionResult PamUserInteraction::request_presence(
+    const UserIdentity& user,
+    const UserInteractionRequest& request,
+    std::stop_token stop,
+    KeepaliveState& keepalive
+) {
+    (void)user;
+    return collect_consent(
+        presence_question(request.operation),
+        stop,
+        keepalive
+    ) ? UserInteractionResult::approved : UserInteractionResult::denied;
+}
+
+UserInteractionResult PamUserInteraction::request_verification(
+    const UserIdentity& user,
+    const UserInteractionRequest& request,
+    std::stop_token stop,
+    KeepaliveState& keepalive
+) {
+    (void)request;
+    return authenticate_user(
+        user.name,
+        processName_,
+        configurationDirectory_,
+        stop,
+        keepalive
+    ) == PAM_SUCCESS
+        ? UserInteractionResult::approved
+        : UserInteractionResult::denied;
 }

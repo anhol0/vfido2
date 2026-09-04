@@ -20,6 +20,7 @@
 #include "cryptography/tpm.hpp"
 #include "device.hpp"
 #include "event.hpp"
+#include "uv/src/auth.hpp"
 #include "uv/src/auth_handler.hpp"
 
 namespace {
@@ -289,7 +290,12 @@ int main(int argc, char** argv) {
         FIDODevice device;
         device.init();
         std::cout << "UHID device created\n";
-        run(device, store, key_provider);
+#ifdef DEBUG
+        PamUserInteraction user_interaction("vfido", "../config");
+#else
+        PamUserInteraction user_interaction("vfido", "/etc/vfido2/config");
+#endif
+        run(device, store, key_provider, user_interaction);
         return 0;
     } catch(const std::exception& error) {
         std::cerr << "vfido: " << error.what() << '\n';

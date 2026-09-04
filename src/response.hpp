@@ -12,6 +12,7 @@
 
 class CredentialKeyProvider;
 class KeepaliveState;
+class UserInteraction;
 
 constexpr uint8_t MASK = 0x80;
 
@@ -45,5 +46,6 @@ CTAPPacket handle_cbor(
     std::stop_token stop,
     CredentialStore& store,
     CredentialKeyProvider& key_provider,
+    UserInteraction& user_interaction,
     KeepaliveState& keepalive
 );

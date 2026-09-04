@@ -16,17 +16,18 @@
 #include "const.hpp"
 #include "uhid_report.hpp"
 #include "cryptography/tpm.hpp"
-#include "uv/src/auth.hpp"
+#include "uv/src/user_interaction.hpp"
 
 std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(
     UHIDReport& r,
     std::stop_token stop,
     CredentialStore& store,
     CredentialKeyProvider& key_provider,
+    UserInteraction& user_interaction,
     KeepaliveState& keepalive
 ) {
     cancellation_point(stop);
-    const LocalUserIdentity local_user = get_local_user_identity();
+    const UserIdentity local_user = user_interaction.current_user(stop);
     if(!excludeList.empty()) {
         for(const auto &d : excludeList) {
             if(
@@ -36,13 +37,17 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(
                 // Do not reveal that this RP already has a credential until
                 // the user-presence ceremony required by CTAP has completed.
                 cancellation_point(stop);
-                const bool user_present = collect_consent(
-                    "Confirm user presence to continue passkey registration?",
+                const auto presence = user_interaction.request_presence(
+                    local_user,
+                    {
+                        .operation = UserInteractionOperation::check_excluded_credential,
+                        .relyingPartyId = rp.id
+                    },
                     stop,
                     keepalive
                 );
                 cancellation_point(stop);
-                if(!user_present) {
+                if(presence != UserInteractionResult::approved) {
                     return {
                         static_cast<uint8_t>(
                             CTAPError::CTAP2_ERR_OPERATION_DENIED
@@ -80,31 +85,33 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(
     // Not cryptographically secure, but fine for now
     for(auto [name, option] : options) {
         if(name == "uv" && option == true) {
-            const std::string procname = "vfido";
-
-#ifdef DEBUG
-            const std::string confdir = "../config";
-#else
-            const std::string confdir = "/etc/vfido2/config";
-#endif
-
-            int rc = authenticate_user(
-                local_user.name, procname, confdir, stop, keepalive
+            const auto verification = user_interaction.request_verification(
+                local_user,
+                {
+                    .operation = UserInteractionOperation::make_credential,
+                    .relyingPartyId = rp.id
+                },
+                stop,
+                keepalive
             );
             cancellation_point(stop);
-            if(rc != 0) {
+            if(verification != UserInteractionResult::approved) {
                 return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_UV_BLOCKED)};
             } else { break; }
         } else if (name == "uv" && option == false) {
             cancellation_point(stop);
-            bool consent = collect_consent(
-                "Authorize passkey creation?",
+            const auto presence = user_interaction.request_presence(
+                local_user,
+                {
+                    .operation = UserInteractionOperation::make_credential,
+                    .relyingPartyId = rp.id
+                },
                 stop,
                 keepalive
             );
             cancellation_point(stop);
 
-            if(!consent) {
+            if(presence != UserInteractionResult::approved) {
                 return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_OPERATION_DENIED)};
             } else { break; }
         }
