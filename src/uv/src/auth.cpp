@@ -1,6 +1,7 @@
 #include "auth.hpp"
 
 #include "auth_handler.hpp"
+#include "auth_handler_status.hpp"
 #include "cancellable_process.hpp"
 #include "cancellation.hpp"
 #include "keepalive.hpp"
@@ -22,6 +23,28 @@
 namespace {
 
 constexpr auto USER_ACTION_TIMEOUT = std::chrono::seconds(30);
+
+void publish_state(
+    UserInteractionStateSink* sink,
+    const UserContext& user,
+    const UserInteractionRequest& request,
+    UserInteractionState state
+) {
+    if(sink != nullptr)
+        sink->publish_state(user, request, state);
+}
+
+bool context_is_still_current(
+    UserContextProvider* provider,
+    const UserContext& user
+) {
+    if(!user.session)
+        return true;
+    if(provider == nullptr)
+        return false;
+    const auto current = provider->current_context();
+    return current && current->binding() == user.binding();
+}
 
 class TerminalStateRestorer {
 public:
@@ -59,7 +82,10 @@ int authenticate_user(
     const std::string& process_name,
     const std::string& confdir,
     std::stop_token stop,
-    KeepaliveState& keepalive
+    KeepaliveState& keepalive,
+    UserInteractionStateSink* state_sink,
+    const UserContext& user,
+    const UserInteractionRequest& request
 ) {
     // The handler normally restores echo itself. This guard also restores the
     // daemon's original terminal state if cancellation requires SIGKILL.
@@ -74,7 +100,35 @@ int authenticate_user(
             confdir
         },
         stop,
-        USER_ACTION_TIMEOUT
+        USER_ACTION_TIMEOUT,
+        [state_sink, &user, &request](uint8_t raw_status) {
+            switch(static_cast<vauth::uv::AuthHandlerStatus>(raw_status)) {
+                case vauth::uv::AuthHandlerStatus::fingerprint_required:
+                    publish_state(
+                        state_sink,
+                        user,
+                        request,
+                        UserInteractionState::fingerprint_required
+                    );
+                    break;
+                case vauth::uv::AuthHandlerStatus::fingerprint_failed:
+                    publish_state(
+                        state_sink,
+                        user,
+                        request,
+                        UserInteractionState::fingerprint_failed
+                    );
+                    break;
+                case vauth::uv::AuthHandlerStatus::password_required:
+                    publish_state(
+                        state_sink,
+                        user,
+                        request,
+                        UserInteractionState::password_required
+                    );
+                    break;
+            }
+        }
     );
     if(status < PAM_SUCCESS || status > PAM_INCOMPLETE)
         return PAM_SYSTEM_ERR;
@@ -158,14 +212,31 @@ UserContext get_local_user_context() {
 
 PamUserInteraction::PamUserInteraction(
     std::string process_name,
-    std::string configuration_directory
+    std::string configuration_directory,
+    UserContextProvider* context_provider,
+    UserInteractionStateSink* state_sink,
+    bool allow_local_context
 ) :
     processName_(std::move(process_name)),
-    configurationDirectory_(std::move(configuration_directory))
+    configurationDirectory_(std::move(configuration_directory)),
+    contextProvider_(context_provider),
+    stateSink_(state_sink),
+    allowLocalContext_(allow_local_context)
 {}
 
 UserContext PamUserInteraction::current_context(std::stop_token stop) {
     cancellation_point(stop);
+    if(contextProvider_ != nullptr) {
+        if(auto context = contextProvider_->current_context()) {
+            cancellation_point(stop);
+            return std::move(*context);
+        }
+    }
+    if(!allowLocalContext_) {
+        throw std::runtime_error(
+            "No active vAuth user-interaction agent is registered"
+        );
+    }
     auto user = get_local_user_context();
     cancellation_point(stop);
     return user;
@@ -177,12 +248,40 @@ UserInteractionResult PamUserInteraction::request_presence(
     std::stop_token stop,
     KeepaliveState& keepalive
 ) {
-    (void)user;
-    return collect_consent(
-        presence_question(request.operation),
-        stop,
-        keepalive
-    ) ? UserInteractionResult::approved : UserInteractionResult::denied;
+    publish_state(
+        stateSink_,
+        user,
+        request,
+        UserInteractionState::presence_required
+    );
+    try {
+        const bool approved = collect_consent(
+            presence_question(request.operation),
+            stop,
+            keepalive
+        ) && context_is_still_current(contextProvider_, user);
+        publish_state(
+            stateSink_,
+            user,
+            request,
+            approved
+                ? UserInteractionState::presence_approved
+                : UserInteractionState::presence_denied
+        );
+        return approved
+            ? UserInteractionResult::approved
+            : UserInteractionResult::denied;
+    } catch(const OperationCancelled&) {
+        publish_state(
+            stateSink_, user, request, UserInteractionState::cancelled
+        );
+        throw;
+    } catch(const UserActionTimedOut&) {
+        publish_state(
+            stateSink_, user, request, UserInteractionState::timed_out
+        );
+        throw;
+    }
 }
 
 UserInteractionResult PamUserInteraction::request_verification(
@@ -191,14 +290,43 @@ UserInteractionResult PamUserInteraction::request_verification(
     std::stop_token stop,
     KeepaliveState& keepalive
 ) {
-    (void)request;
-    return authenticate_user(
-        user.name,
-        processName_,
-        configurationDirectory_,
-        stop,
-        keepalive
-    ) == PAM_SUCCESS
-        ? UserInteractionResult::approved
-        : UserInteractionResult::denied;
+    publish_state(
+        stateSink_,
+        user,
+        request,
+        UserInteractionState::verification_started
+    );
+    try {
+        const bool approved = authenticate_user(
+            user.name,
+            processName_,
+            configurationDirectory_,
+            stop,
+            keepalive,
+            stateSink_,
+            user,
+            request
+        ) == PAM_SUCCESS && context_is_still_current(contextProvider_, user);
+        publish_state(
+            stateSink_,
+            user,
+            request,
+            approved
+                ? UserInteractionState::verification_succeeded
+                : UserInteractionState::verification_failed
+        );
+        return approved
+            ? UserInteractionResult::approved
+            : UserInteractionResult::denied;
+    } catch(const OperationCancelled&) {
+        publish_state(
+            stateSink_, user, request, UserInteractionState::cancelled
+        );
+        throw;
+    } catch(const UserActionTimedOut&) {
+        publish_state(
+            stateSink_, user, request, UserInteractionState::timed_out
+        );
+        throw;
+    }
 }

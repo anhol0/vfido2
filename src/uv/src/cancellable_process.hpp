@@ -1,6 +1,8 @@
 #pragma once
 
 #include <chrono>
+#include <cstdint>
+#include <functional>
 #include <stop_token>
 #include <string>
 #include <vector>
@@ -13,7 +15,8 @@ int run_cancellable_program(
     const std::string& path,
     const std::vector<std::string>& arguments,
     std::stop_token stop,
-    std::chrono::steady_clock::duration timeout
+    std::chrono::steady_clock::duration timeout,
+    const std::function<void(uint8_t)>& status_callback = {}
 );
 
 }

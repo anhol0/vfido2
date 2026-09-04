@@ -11,6 +11,23 @@ include(CTest)
 
 add_subdirectory(${SOURCE_DIR}/uv)
 
+find_package(PkgConfig REQUIRED)
+find_package(sdbus-c++ CONFIG REQUIRED)
+pkg_check_modules(SYSTEMD REQUIRED IMPORTED_TARGET libsystemd)
+
+add_library(vauth_dbus
+    ${SOURCE_DIR}/dbus/agent_registry.cpp
+    ${SOURCE_DIR}/dbus/agent_service.cpp
+)
+target_include_directories(vauth_dbus PUBLIC ${SOURCE_DIR})
+target_compile_definitions(vauth_dbus PRIVATE
+    $<$<CONFIG:Debug>:DEBUG>
+)
+target_link_libraries(vauth_dbus PUBLIC
+    SDBusCpp::sdbus-c++
+    PkgConfig::SYSTEMD
+)
+
 add_library(ctaphid_frame_processor
     ${SOURCE_DIR}/frame_processor.cpp
 )
@@ -49,9 +66,9 @@ add_executable(${PN}
 target_compile_definitions(${PN} PRIVATE
     $<$<CONFIG:Debug>:DEBUG>
     $<$<CONFIG:Debug>:VAUTH_DEVELOPMENT_BUILD>
+    $<$<CONFIG:Debug>:VAUTH_DEBUG_PAM_CONFIG_DIR="${PROJECT_SOURCE_DIR}/config">
 )
 
-find_package(PkgConfig REQUIRED)
 pkg_check_modules(TINYCBOR REQUIRED tinycbor)
 pkg_check_modules(OPENSSL REQUIRED openssl)
 pkg_check_modules(TSS2_ESYS REQUIRED tss2-esys)
@@ -77,7 +94,17 @@ target_link_libraries(${PN} PRIVATE
     ctaphid_frame_processor
     ctaphid_packet
     uv
+    vauth_dbus
 )
+
+option(
+    VAUTH_BUILD_DEBUG_AGENT
+    "Build the temporary console D-Bus user-interaction agent"
+    ${BUILD_TESTING}
+)
+if(VAUTH_BUILD_DEBUG_AGENT)
+    add_subdirectory(client)
+endif()
 
 if(BUILD_TESTING)
     add_subdirectory(tests)

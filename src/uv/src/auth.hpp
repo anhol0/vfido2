@@ -9,7 +9,10 @@ class PamUserInteraction final : public UserInteraction {
 public:
     PamUserInteraction(
         std::string process_name,
-        std::string configuration_directory
+        std::string configuration_directory,
+        UserContextProvider* context_provider = nullptr,
+        UserInteractionStateSink* state_sink = nullptr,
+        bool allow_local_context = true
     );
 
     [[nodiscard]] UserContext current_context(
@@ -31,4 +34,7 @@ public:
 private:
     std::string processName_;
     std::string configurationDirectory_;
+    UserContextProvider* contextProvider_;
+    UserInteractionStateSink* stateSink_;
+    bool allowLocalContext_;
 };

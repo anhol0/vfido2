@@ -1,18 +1,67 @@
 #include "auth_handler.hpp"
+#include "auth_handler_status.hpp"
 
 #include <security/_pam_types.h>
 #include <security/pam_appl.h>
 
 #include <array>
+#include <algorithm>
+#include <cerrno>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <string>
+#include <string_view>
 #include <strings.h>
 #include <termios.h>
 #include <unistd.h>
 
 namespace {
+
+struct ConversationContext {
+    bool fingerprintPrompted = false;
+};
+
+void send_status(vauth::uv::AuthHandlerStatus status) noexcept {
+    const uint8_t value = static_cast<uint8_t>(status);
+    ssize_t result;
+    do {
+        result = write(
+            vauth::uv::AUTH_HANDLER_STATUS_FD,
+            &value,
+            sizeof(value)
+        );
+    } while(result < 0 && errno == EINTR);
+}
+
+std::string lowercase(std::string_view text) {
+    std::string result(text);
+    std::transform(
+        result.begin(),
+        result.end(),
+        result.begin(),
+        [](unsigned char character) {
+            return static_cast<char>(std::tolower(character));
+        }
+    );
+    return result;
+}
+
+bool mentions_fingerprint(std::string_view message) {
+    return
+        message.find("finger") != std::string_view::npos ||
+        message.find("swipe") != std::string_view::npos;
+}
+
+bool reports_failure(std::string_view message) {
+    return
+        message.find("fail") != std::string_view::npos ||
+        message.find("not recognized") != std::string_view::npos ||
+        message.find("no match") != std::string_view::npos ||
+        message.find("try again") != std::string_view::npos;
+}
 
 class TerminalState {
 public:
@@ -66,8 +115,9 @@ int read_response(const pam_message& message, bool hide, char** response) {
     if(response == nullptr)
         return PAM_CONV_ERR;
 
-    if(message.msg != nullptr)
-        std::fprintf(stderr, "[PAM] %s\n", message.msg);
+    if(hide) {
+        send_status(vauth::uv::AuthHandlerStatus::password_required);
+    }
 
     TerminalState terminal;
     if(hide && !terminal.disable_echo())
@@ -98,7 +148,7 @@ int conversation(
     int message_count,
     const pam_message** messages,
     pam_response** response,
-    void*
+    void* user_data
 ) noexcept {
     if(
         message_count <= 0 ||
@@ -109,6 +159,7 @@ int conversation(
         return PAM_CONV_ERR;
     }
     *response = nullptr;
+    auto* context = static_cast<ConversationContext*>(user_data);
 
     auto* replies = static_cast<pam_response*>(
         std::calloc(static_cast<std::size_t>(message_count), sizeof(pam_response))
@@ -132,10 +183,29 @@ int conversation(
                     rc = read_response(*messages[i], false, &replies[i].resp);
                     break;
                 case PAM_TEXT_INFO:
-                case PAM_ERROR_MSG:
-                    if(messages[i]->msg != nullptr)
-                        std::fprintf(stderr, "[PAM] %s\n", messages[i]->msg);
+                case PAM_ERROR_MSG: {
+                    const std::string normalized = lowercase(
+                        messages[i]->msg == nullptr ? "" : messages[i]->msg
+                    );
+                    if(mentions_fingerprint(normalized)) {
+                        if(context != nullptr)
+                            context->fingerprintPrompted = true;
+                        send_status(
+                            reports_failure(normalized)
+                                ? vauth::uv::AuthHandlerStatus::fingerprint_failed
+                                : vauth::uv::AuthHandlerStatus::fingerprint_required
+                        );
+                    } else if(
+                        context != nullptr &&
+                        context->fingerprintPrompted &&
+                        reports_failure(normalized)
+                    ) {
+                        send_status(
+                            vauth::uv::AuthHandlerStatus::fingerprint_failed
+                        );
+                    }
                     break;
+                }
                 default:
                     rc = PAM_CONV_ERR;
                     break;
@@ -210,7 +280,8 @@ int authenticate(
     const char* process_name,
     const char* confdir
 ) {
-    const pam_conv conv{&conversation, nullptr};
+    ConversationContext context;
+    const pam_conv conv{&conversation, &context};
     PamSession session;
     int rc = session.start(
         process_name,

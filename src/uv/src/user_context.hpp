@@ -4,12 +4,12 @@
 #include <optional>
 #include <string>
 
-// Identifies one registration of a UI agent in a local login session.
-// The D-Bus adapter must populate these fields from trusted bus/logind data,
+// Identifies one registration of a UI agent in a local login session. The IPC
+// adapter must derive these fields from trusted peer and session credentials,
 // never from identity values asserted by the UI.
 struct UserSessionContext {
     std::string sessionId;
-    std::string agentBusName;
+    std::string interactionAgentId;
     uint64_t generation;
 
     bool operator==(const UserSessionContext&) const = default;

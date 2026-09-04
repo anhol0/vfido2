@@ -19,6 +19,7 @@
 #include "cryptography/store_security.hpp"
 #include "cryptography/tpm.hpp"
 #include "device.hpp"
+#include "dbus/agent_service.hpp"
 #include "event.hpp"
 #include "uv/src/auth.hpp"
 #include "uv/src/auth_handler.hpp"
@@ -287,13 +288,26 @@ int main(int argc, char** argv) {
         );
         store.load();
 
+        vauth::dbus::AgentService agent_service;
         FIDODevice device;
         device.init();
         std::cout << "UHID device created\n";
 #ifdef DEBUG
-        PamUserInteraction user_interaction("vauth", "../config");
+        PamUserInteraction user_interaction(
+            "vauth",
+            VAUTH_DEBUG_PAM_CONFIG_DIR,
+            &agent_service,
+            &agent_service,
+            true
+        );
 #else
-        PamUserInteraction user_interaction("vauth", "/etc/vauth/config");
+        PamUserInteraction user_interaction(
+            "vauth",
+            "/etc/vauth/config",
+            &agent_service,
+            &agent_service,
+            false
+        );
 #endif
         run(device, store, key_provider, user_interaction);
         return 0;
