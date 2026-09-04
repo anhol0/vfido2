@@ -232,7 +232,7 @@ int authenticate(
 
 }
 
-int run_vfido_auth_handler(int argc, char** argv) noexcept {
+int run_vauth_auth_handler(int argc, char** argv) noexcept {
     if(argc != 3 || argv == nullptr)
         return PAM_SYSTEM_ERR;
 

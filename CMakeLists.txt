@@ -1,4 +1,4 @@
-set(PN vfido)
+set(PN vauth)
 
 cmake_minimum_required(VERSION 3.20)
 project(${PN} CXX)
@@ -48,7 +48,7 @@ add_executable(${PN}
 
 target_compile_definitions(${PN} PRIVATE
     $<$<CONFIG:Debug>:DEBUG>
-    $<$<CONFIG:Debug>:VFIDO_DEVELOPMENT_BUILD>
+    $<$<CONFIG:Debug>:VAUTH_DEVELOPMENT_BUILD>
 )
 
 find_package(PkgConfig REQUIRED)

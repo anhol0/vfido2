@@ -84,7 +84,7 @@ target_include_directories(crypto_tests PRIVATE
 )
 
 target_compile_definitions(crypto_tests PRIVATE
-    VFIDO_DEVELOPMENT_BUILD
+    VAUTH_DEVELOPMENT_BUILD
 )
 
 target_link_libraries(crypto_tests PRIVATE
@@ -114,7 +114,7 @@ target_include_directories(store_security_integration_tests PRIVATE
 )
 
 target_compile_definitions(store_security_integration_tests PRIVATE
-    VFIDO_DEVELOPMENT_BUILD
+    VAUTH_DEVELOPMENT_BUILD
 )
 
 target_link_libraries(store_security_integration_tests PRIVATE

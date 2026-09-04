@@ -65,10 +65,10 @@ int authenticate_user(
     // daemon's original terminal state if cancellation requires SIGKILL.
     TerminalStateRestorer terminal;
     UserActionKeepaliveGuard waiting_for_user(keepalive);
-    const int status = vfido::uv::run_cancellable_program(
+    const int status = vauth::uv::run_cancellable_program(
         "/proc/self/exe",
         {
-            std::string(VFIDO_AUTH_HANDLER_COMMAND),
+            std::string(VAUTH_AUTH_HANDLER_COMMAND),
             username,
             process_name,
             confdir
@@ -101,7 +101,7 @@ bool collect_consent(
     try {
         const std::string program = zenity_program();
         UserActionKeepaliveGuard waiting_for_user(keepalive);
-        return vfido::uv::run_cancellable_program(
+        return vauth::uv::run_cancellable_program(
             program,
             {"--question", "--text=" + std::string(question)},
             stop,

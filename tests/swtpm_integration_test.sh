@@ -3,7 +3,7 @@ set -euo pipefail
 
 test_binary=$1
 profile_directory=$2
-test_directory=$(mktemp -d /tmp/vfido2-swtpm-test.XXXXXX)
+test_directory=$(mktemp -d /tmp/vauth-swtpm-test.XXXXXX)
 server_socket=$test_directory/server.sock
 control_socket=$server_socket.ctrl
 

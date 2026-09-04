@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-namespace vfido::uv {
+namespace vauth::uv {
 
 // Runs a program in its own process group. Cancellation or timeout terminates
 // and reaps the whole group before the corresponding exception is thrown.

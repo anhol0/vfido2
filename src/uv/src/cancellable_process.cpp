@@ -19,7 +19,7 @@
 
 extern char** environ;
 
-namespace vfido::uv {
+namespace vauth::uv {
 namespace {
 
 class SpawnAttributes {

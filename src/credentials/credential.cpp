@@ -217,7 +217,7 @@ std::string random_temporary_name() {
     openssl_random_bytes(random_bytes);
 
     constexpr char hex_digits[] = "0123456789abcdef";
-    std::string name = ".vfido2.tmp.";
+    std::string name = ".vauth.tmp.";
     name.reserve(name.size() + random_bytes.size() * 2);
     for(const uint8_t byte : random_bytes) {
         name.push_back(hex_digits[byte >> 4]);
@@ -961,7 +961,7 @@ void CredentialStore::load() {
     requiresReload_ = false;
 }
 
-#ifdef VFIDO_DEVELOPMENT_BUILD
+#ifdef VAUTH_DEVELOPMENT_BUILD
 void CredentialStore::clear() {
     Storage empty;
     save_storage(empty);

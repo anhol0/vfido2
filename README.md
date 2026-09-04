@@ -1,17 +1,17 @@
-# vFIDO2
+# vAuth
 
-Windows Hello for Linux-based systems.
+A Lamellix Labs virtual FIDO2 authenticator for Linux-based systems.
 
 See [ROADMAP.md](ROADMAP.md) for the security and feature work remaining before
-using vFIDO2 with real credentials.
+using vAuth with real credentials.
 
 ## Database security setup
 
-The credential database is stored at `/var/lib/vfido/credentials.v1`. Its
+The credential database is stored at `/var/lib/vauth/credentials.v1`. Its
 AES-256-GCM key is generated and sealed by TPM2-TSS FAPI at
-`/HS/SRK/vfido-database-key` together with the TPM counter value observed at
+`/HS/SRK/vauth-database-key` together with the TPM counter value observed at
 provisioning. A separately authorized TPM NV counter at
-`/nv/Owner/vfido-db-generation` detects replacement with an older, otherwise
+`/nv/Owner/vauth-db-generation` detects replacement with an older, otherwise
 valid database. Recording the counter origin allows provisioning on TPMs whose
 new counters begin above one because of earlier counter use.
 
@@ -32,11 +32,11 @@ is an explicit administrative operation:
 ```sh
 sudo tss2_provision
 sudo install -d -m 0700 /etc/credstore.encrypted
-sudo systemd-creds encrypt --name=vfido-db-auth - \
-  /etc/credstore.encrypted/vfido-db-auth
+sudo systemd-creds encrypt --name=vauth-db-auth - \
+  /etc/credstore.encrypted/vauth-db-auth
 sudo systemd-run --wait --pipe --property=Type=oneshot \
-  --property=LoadCredentialEncrypted=vfido-db-auth:/etc/credstore.encrypted/vfido-db-auth \
-  /usr/local/bin/vfido provision
+  --property=LoadCredentialEncrypted=vauth-db-auth:/etc/credstore.encrypted/vauth-db-auth \
+  /usr/local/bin/vauth provision
 ```
 
 Enter a non-empty authorization of at most 32 bytes when `systemd-creds`
@@ -47,17 +47,17 @@ Debug builds provide a development-only command for removing every credential
 while preserving the sealed database key and rollback-counter objects:
 
 ```sh
-sudo systemctl stop vfido
-sudo ./build/vfido clear-store --yes --auth-file .dev/vfido-db-auth
+sudo systemctl stop vauth
+sudo ./build/vauth clear-store --yes --auth-file .dev/vauth-db-auth
 ```
 
 The command authenticates and loads the existing database, commits an encrypted
 empty collection atomically, and advances the rollback counter. It refuses to
-run while another current vFIDO process holds the store lock. An older database
+run while another current vAuth process holds the store lock. An older database
 copy cannot be restored after the counter advances. Non-Debug builds do not
 advertise or accept `clear-store`.
 
-[`config/vfido.service.example`](config/vfido.service.example) shows how to pass
+[`config/vauth.service.example`](config/vauth.service.example) shows how to pass
 the encrypted credential to the daemon. The service identity must be able to
 open `/dev/uhid`, the TPM resource-manager device, and the FAPI system keystore.
 It must also be the intended PAM authentication identity for this single-user

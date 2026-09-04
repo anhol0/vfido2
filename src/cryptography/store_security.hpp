@@ -24,9 +24,9 @@ public:
     [[nodiscard]] uint64_t read() override;
     void increment() override;
 
-    static constexpr const char* KEY_PATH = "/HS/SRK/vfido-database-key";
+    static constexpr const char* KEY_PATH = "/HS/SRK/vauth-database-key";
     static constexpr const char* COUNTER_PATH =
-        "/nv/Owner/vfido-db-generation";
+        "/nv/Owner/vauth-db-generation";
 
 private:
     [[nodiscard]] uint64_t read_raw_counter();

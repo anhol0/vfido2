@@ -63,7 +63,7 @@ public:
     );
     ~CredentialStore();
     void load();
-#ifdef VFIDO_DEVELOPMENT_BUILD
+#ifdef VAUTH_DEVELOPMENT_BUILD
     void clear();
 #endif
 

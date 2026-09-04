@@ -1,15 +1,15 @@
 [Unit]
-Description=vFIDO2 virtual authenticator
+Description=Lamellix Labs vAuth virtual authenticator
 After=systemd-udevd.service
 
 [Service]
 Type=simple
-User=vfido
-Group=vfido
-ExecStart=/usr/local/bin/vfido run
-StateDirectory=vfido
+User=vauth
+Group=vauth
+ExecStart=/usr/local/bin/vauth run
+StateDirectory=vauth
 StateDirectoryMode=0700
-LoadCredentialEncrypted=vfido-db-auth:/etc/credstore.encrypted/vfido-db-auth
+LoadCredentialEncrypted=vauth-db-auth:/etc/credstore.encrypted/vauth-db-auth
 UMask=0077
 NoNewPrivileges=yes
 PrivateTmp=yes

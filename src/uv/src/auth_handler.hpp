@@ -2,7 +2,7 @@
 
 #include <string_view>
 
-inline constexpr std::string_view VFIDO_AUTH_HANDLER_COMMAND =
-    "vfido_auth_handler";
+inline constexpr std::string_view VAUTH_AUTH_HANDLER_COMMAND =
+    "vauth_auth_handler";
 
-int run_vfido_auth_handler(int argc, char** argv) noexcept;
+int run_vauth_auth_handler(int argc, char** argv) noexcept;

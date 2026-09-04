@@ -24,7 +24,7 @@ namespace {
 
 bool test_exit_status(const std::string& executable) {
     std::stop_source stop;
-    CHECK(vfido::uv::run_cancellable_program(
+    CHECK(vauth::uv::run_cancellable_program(
         executable,
         {"--child-exit"},
         stop.get_token(),
@@ -40,7 +40,7 @@ bool test_cancellation_interrupts_child(const std::string& executable) {
 
     std::jthread worker([&](std::stop_token stop) {
         try {
-            static_cast<void>(vfido::uv::run_cancellable_program(
+            static_cast<void>(vauth::uv::run_cancellable_program(
                 executable,
                 {"--child-wait"},
                 stop,
@@ -71,7 +71,7 @@ bool test_timeout_interrupts_child(const std::string& executable) {
     const auto started = std::chrono::steady_clock::now();
 
     try {
-        static_cast<void>(vfido::uv::run_cancellable_program(
+        static_cast<void>(vauth::uv::run_cancellable_program(
             executable,
             {"--child-wait"},
             stop.get_token(),

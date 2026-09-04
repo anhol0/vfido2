@@ -25,8 +25,8 @@
 
 namespace {
 
-constexpr const char* STORE_PATH = "/var/lib/vfido/credentials.v1";
-constexpr const char* CREDENTIAL_NAME = "vfido-db-auth";
+constexpr const char* STORE_PATH = "/var/lib/vauth/credentials.v1";
+constexpr const char* CREDENTIAL_NAME = "vauth-db-auth";
 
 class UniqueFd {
 public:
@@ -68,17 +68,17 @@ struct Authorization {
 struct Options {
     std::string command = "run";
     std::optional<std::filesystem::path> authorizationPath;
-#ifdef VFIDO_DEVELOPMENT_BUILD
+#ifdef VAUTH_DEVELOPMENT_BUILD
     bool confirmedClear = false;
 #endif
 };
 
 [[noreturn]] void usage_error(const std::string& message) {
     std::string usage =
-        "\nUsage: vfido [run|provision] [--auth-file PATH]";
-#ifdef VFIDO_DEVELOPMENT_BUILD
+        "\nUsage: vauth [run|provision] [--auth-file PATH]";
+#ifdef VAUTH_DEVELOPMENT_BUILD
     usage +=
-        "\n       vfido clear-store --yes [--auth-file PATH]"
+        "\n       vauth clear-store --yes [--auth-file PATH]"
         " (Debug builds only)";
 #endif
     throw std::invalid_argument(message + usage);
@@ -93,7 +93,7 @@ Options parse_options(int argc, char** argv) {
     if(
         options.command != "run" &&
         options.command != "provision"
-#ifdef VFIDO_DEVELOPMENT_BUILD
+#ifdef VAUTH_DEVELOPMENT_BUILD
         && options.command != "clear-store"
 #endif
     ) {
@@ -112,7 +112,7 @@ Options parse_options(int argc, char** argv) {
             options.authorizationPath = argv[index++];
             continue;
         }
-#ifdef VFIDO_DEVELOPMENT_BUILD
+#ifdef VAUTH_DEVELOPMENT_BUILD
         if(argument == "--yes") {
             if(options.confirmedClear) {
                 usage_error("--yes may be specified only once");
@@ -124,7 +124,7 @@ Options parse_options(int argc, char** argv) {
         usage_error("Unknown option: " + argument);
     }
 
-#ifdef VFIDO_DEVELOPMENT_BUILD
+#ifdef VAUTH_DEVELOPMENT_BUILD
     if(options.command == "clear-store" && !options.confirmedClear) {
         usage_error("clear-store requires --yes confirmation");
     }
@@ -144,7 +144,7 @@ std::filesystem::path authorization_path(const Options& options) {
     if(credential_directory == nullptr || credential_directory[0] == '\0') {
         throw std::runtime_error(
             "No database authorization credential was provided; use "
-            "--auth-file or the systemd vfido-db-auth credential"
+            "--auth-file or the systemd vauth-db-auth credential"
         );
     }
     return std::filesystem::path(credential_directory) / CREDENTIAL_NAME;
@@ -243,9 +243,9 @@ void read_authorization(
 int main(int argc, char** argv) {
     if(
         argc >= 2 &&
-        std::string_view(argv[1]) == VFIDO_AUTH_HANDLER_COMMAND
+        std::string_view(argv[1]) == VAUTH_AUTH_HANDLER_COMMAND
     ) {
-        return run_vfido_auth_handler(argc - 2, argv + 2);
+        return run_vauth_auth_handler(argc - 2, argv + 2);
     }
 
     try {
@@ -262,7 +262,7 @@ int main(int argc, char** argv) {
 
         CredentialStoreLock store_lock(STORE_PATH);
         auto database_key = security.unseal_key();
-#ifdef VFIDO_DEVELOPMENT_BUILD
+#ifdef VAUTH_DEVELOPMENT_BUILD
         if(options.command == "clear-store") {
             CredentialStore store(
                 STORE_PATH,
@@ -291,14 +291,14 @@ int main(int argc, char** argv) {
         device.init();
         std::cout << "UHID device created\n";
 #ifdef DEBUG
-        PamUserInteraction user_interaction("vfido", "../config");
+        PamUserInteraction user_interaction("vauth", "../config");
 #else
-        PamUserInteraction user_interaction("vfido", "/etc/vfido2/config");
+        PamUserInteraction user_interaction("vauth", "/etc/vauth/config");
 #endif
         run(device, store, key_provider, user_interaction);
         return 0;
     } catch(const std::exception& error) {
-        std::cerr << "vfido: " << error.what() << '\n';
+        std::cerr << "vauth: " << error.what() << '\n';
         return 1;
     }
 }

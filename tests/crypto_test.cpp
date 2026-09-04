@@ -75,7 +75,7 @@ public:
     TemporaryStore() {
         auto name_template = (
             std::filesystem::temp_directory_path() /
-            "vfido2-crypto-test-XXXXXX"
+            "vauth-crypto-test-XXXXXX"
         ).string();
         std::vector<char> writable_name(
             name_template.begin(), name_template.end()
@@ -117,8 +117,8 @@ bool contains_generated_temporary_file(
     const std::filesystem::path& directory
 ) {
     for(const auto& entry : std::filesystem::directory_iterator(directory)) {
-        if(entry.path().filename().string().starts_with(".vfido2.tmp.") &&
-           entry.path().filename() != ".vfido2.tmp.stale") {
+        if(entry.path().filename().string().starts_with(".vauth.tmp.") &&
+           entry.path().filename() != ".vauth.tmp.stale") {
             return true;
         }
     }
@@ -685,7 +685,7 @@ void test_repeated_save_replaces_database_durably() {
     const std::vector<uint8_t> key(32, 0xA6);
     const auto credential = make_credential();
 
-    std::ofstream stale(temporary.directory() / ".vfido2.tmp.stale");
+    std::ofstream stale(temporary.directory() / ".vauth.tmp.stale");
     CHECK(static_cast<bool>(stale));
     stale << "stale";
     stale.close();

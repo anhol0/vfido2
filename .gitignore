@@ -3,7 +3,7 @@
 .planning
 *.cbor
 .vscode/
-vfido_session
+vauth_session
 build/
 compile_commands.json
 ROADMAP.md

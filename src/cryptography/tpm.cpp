@@ -30,11 +30,11 @@ constexpr std::size_t CREDENTIAL_ID_MIN_SIZE = 16;
 constexpr std::size_t CREDENTIAL_ID_MAX_SIZE = 1024;
 constexpr std::size_t SHA256_SIZE = 32;
 constexpr std::string_view PARENT_AUTH_LABEL =
-    "vfido2 transient parent authorization v1";
+    "vauth transient parent authorization v1";
 constexpr std::string_view CREDENTIAL_MASTER_LABEL =
-    "vfido2 credential authorization master v1";
+    "vauth credential authorization master v1";
 constexpr std::string_view CREDENTIAL_AUTH_LABEL =
-    "vfido2 credential authorization v1";
+    "vauth credential authorization v1";
 constexpr TPMA_OBJECT PARENT_ATTRIBUTES =
     TPMA_OBJECT_FIXEDTPM |
     TPMA_OBJECT_FIXEDPARENT |

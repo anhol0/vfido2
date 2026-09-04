@@ -48,7 +48,7 @@ void FIDODevice::init() {
     ev.type = UHID_CREATE2;
 
     memcpy(ev.u.create2.rd_data, fido_report_desc.data(), fido_report_desc.size());
-    strncpy((char*)ev.u.create.name, "vFIDO2-Keyring", sizeof(ev.u.create.name) - 1);
+    strncpy((char*)ev.u.create.name, "vAuth-Keyring", sizeof(ev.u.create.name) - 1);
 
     ev.u.create2.rd_size = fido_report_desc.size();
 
