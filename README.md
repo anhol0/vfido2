@@ -38,10 +38,12 @@ sudo busctl call org.freedesktop.DBus /org/freedesktop/DBus \
 ```
 
 Debug builds also produce `build/vauth-agent-debug`. Run it as the desktop user
-to register once with the daemon, answer presence and password prompts, and
-print the targeted interaction-state signals that a future Slint UI will
-consume. Passwords are submitted through a bounded one-shot Unix pipe rather
-than as D-Bus string values.
+before starting a WebAuthn ceremony. Without an active registered agent, vAuth
+rejects operations that require user presence or verification; it never falls
+back to daemon stdin or a local dialog. The agent answers presence and password
+prompts and prints the targeted interaction-state signals that a future Slint UI
+will consume. Passwords are submitted through a bounded one-shot Unix pipe
+rather than as D-Bus string values.
 
 ## Provision database security objects
 
