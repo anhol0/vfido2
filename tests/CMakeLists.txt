@@ -75,6 +75,7 @@ add_test(
 add_executable(dbus_agent_registry_tests
     dbus_agent_registry_test.cpp
     ${PROJECT_SOURCE_DIR}/src/dbus/agent_registry.cpp
+    ${PROJECT_SOURCE_DIR}/src/dbus/interaction_registry.cpp
 )
 
 target_include_directories(dbus_agent_registry_tests PRIVATE
