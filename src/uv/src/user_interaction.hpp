@@ -2,6 +2,7 @@
 
 #include "user_context.hpp"
 
+#include <cstdint>
 #include <optional>
 #include <stop_token>
 #include <string_view>
@@ -17,6 +18,7 @@ enum class UserInteractionOperation {
 struct UserInteractionRequest {
     UserInteractionOperation operation;
     std::string_view relyingPartyId;
+    uint64_t requestId = 0;
 };
 
 enum class UserInteractionResult {
@@ -91,11 +93,19 @@ public:
 class UserInteractionStateSink {
 public:
     virtual ~UserInteractionStateSink() = default;
+    [[nodiscard]] virtual uint64_t begin_interaction(
+        const UserContext& user,
+        const UserInteractionRequest& request
+    ) = 0;
     virtual void publish_state(
         const UserContext& user,
         const UserInteractionRequest& request,
         UserInteractionState state
     ) = 0;
+    virtual void end_interaction(
+        const UserContext& user,
+        const UserInteractionRequest& request
+    ) noexcept = 0;
 };
 
 class UserInteraction {

@@ -61,13 +61,15 @@ int main() {
         ).call(
             [&generation](
                 uint64_t signal_generation,
+                uint64_t request_id,
                 const std::string& state,
                 const std::string& operation,
                 const std::string& relying_party_id
             ) {
                 if(signal_generation != generation)
                     return;
-                std::cout << "D-Bus state: " << state << " ("
+                std::cout << "D-Bus state: " << state
+                          << " [request " << request_id << "] ("
                           << operation << ")\n"
                           << display_message(
                               state,

@@ -2,6 +2,7 @@
 
 #include "agent_registry.hpp"
 #include "constants.hpp"
+#include "interaction_registry.hpp"
 
 #include <sdbus-c++/sdbus-c++.h>
 #include <systemd/sd-login.h>
@@ -196,6 +197,7 @@ bool session_is_still_active(const UserContext& context) noexcept {
 
 struct StateEvent {
     UserContext user;
+    uint64_t requestId;
     UserInteractionOperation operation;
     UserInteractionState state;
     std::string relyingPartyId;
@@ -231,8 +233,15 @@ public:
         };
 
         auto state_signal = sdbus::registerSignal(std::string(STATE_SIGNAL));
-        state_signal.withParameters<uint64_t, std::string, std::string, std::string>(
+        state_signal.withParameters<
+            uint64_t,
+            uint64_t,
+            std::string,
+            std::string,
+            std::string
+        >(
             "generation",
+            "requestId",
             "state",
             "operation",
             "relyingPartyId"
@@ -279,6 +288,7 @@ public:
             return context;
 
         const std::string bus_name = context->session->interactionAgentId;
+        interactions_.clear_for(*context);
         static_cast<void>(registry_.unregister_agent(bus_name));
 #ifdef DEBUG
         std::cerr << ANSI_PURPLE
@@ -288,19 +298,46 @@ public:
         return std::nullopt;
     }
 
+    [[nodiscard]] uint64_t begin_interaction(
+        const UserContext& user,
+        const UserInteractionRequest& request
+    ) {
+        throw_if_failed();
+        if(request.requestId != 0)
+            throw std::invalid_argument("Interaction already has a request ID");
+        if(!user.session || !registry_.is_current(user))
+            return 0;
+        return interactions_.begin(
+            user,
+            request.operation,
+            request.relyingPartyId
+        );
+    }
+
     void publish_state(
         const UserContext& user,
         const UserInteractionRequest& request,
         UserInteractionState state
     ) {
         throw_if_failed();
-        if(!user.session || !registry_.is_current(user))
+        if(
+            request.requestId == 0 ||
+            !user.session ||
+            !registry_.is_current(user)
+        ) {
             return;
+        }
+        interactions_.transition(
+            user,
+            request.requestId,
+            state
+        );
 
         {
             std::lock_guard lock(queueMutex_);
             events_.push_back({
                 .user = user,
+                .requestId = request.requestId,
                 .operation = request.operation,
                 .state = state,
                 .relyingPartyId = std::string(request.relyingPartyId)
@@ -309,12 +346,23 @@ public:
         wake();
     }
 
+    void end_interaction(
+        const UserContext& user,
+        const UserInteractionRequest& request
+    ) noexcept {
+        static_cast<void>(interactions_.end(
+            user,
+            request.requestId
+        ));
+    }
+
 private:
     void register_agent(sdbus::MethodCall call) noexcept {
         try {
             AgentPeer peer = resolve_peer(call);
             if(auto current = registry_.current_context()) {
                 if(!session_is_still_active(*current)) {
+                    interactions_.clear_for(*current);
                     static_cast<void>(registry_.unregister_agent(
                         current->session->interactionAgentId
                     ));
@@ -349,6 +397,15 @@ private:
             const char* sender = call.getSender();
             if(sender == nullptr || sender[0] != ':')
                 throw std::runtime_error("Agent has no unique bus name");
+            const auto current = registry_.current_context();
+            if(
+                !current ||
+                !current->session ||
+                current->session->interactionAgentId != sender
+            ) {
+                throw std::runtime_error("Calling agent is not registered");
+            }
+            interactions_.clear_for(*current);
             if(!registry_.unregister_agent(sender))
                 throw std::runtime_error("Calling agent is not registered");
             call.createReply().send();
@@ -371,6 +428,14 @@ private:
     }
 
     void unregister_disconnected_agent(const std::string& bus_name) noexcept {
+        const auto current = registry_.current_context();
+        if(
+            current &&
+            current->session &&
+            current->session->interactionAgentId == bus_name
+        ) {
+            interactions_.clear_for(*current);
+        }
         if(!registry_.unregister_agent(bus_name))
             return;
 #ifdef DEBUG
@@ -412,6 +477,7 @@ private:
             signal.setDestination(event.user.session->interactionAgentId);
             signal
                 << event.user.session->generation
+                << event.requestId
                 << std::string(user_interaction_state_name(event.state))
                 << std::string(user_interaction_operation_name(event.operation))
                 << event.relyingPartyId;
@@ -489,6 +555,7 @@ private:
             failure_ = std::move(message);
         }
         if(auto context = registry_.current_context()) {
+            interactions_.clear_for(*context);
             static_cast<void>(registry_.unregister_agent(
                 context->session->interactionAgentId
             ));
@@ -506,6 +573,7 @@ private:
     }
 
     AgentRegistry registry_;
+    InteractionRegistry interactions_;
     std::unique_ptr<sdbus::IConnection> connection_;
     std::unique_ptr<sdbus::IObject> object_;
     sdbus::Slot vtable_;
@@ -526,12 +594,26 @@ std::optional<UserContext> AgentService::current_context() {
     return impl_->current_context();
 }
 
+uint64_t AgentService::begin_interaction(
+    const UserContext& user,
+    const UserInteractionRequest& request
+) {
+    return impl_->begin_interaction(user, request);
+}
+
 void AgentService::publish_state(
     const UserContext& user,
     const UserInteractionRequest& request,
     UserInteractionState state
 ) {
     impl_->publish_state(user, request, state);
+}
+
+void AgentService::end_interaction(
+    const UserContext& user,
+    const UserInteractionRequest& request
+) noexcept {
+    impl_->end_interaction(user, request);
 }
 
 }

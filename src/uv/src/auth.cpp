@@ -46,6 +46,35 @@ bool context_is_still_current(
     return current && current->binding() == user.binding();
 }
 
+class InteractionScope {
+public:
+    InteractionScope(
+        UserInteractionStateSink* sink,
+        const UserContext& user,
+        const UserInteractionRequest& request
+    ) : sink_(sink), user_(user), request_(request) {
+        if(sink_ != nullptr)
+            request_.requestId = sink_->begin_interaction(user_, request_);
+    }
+
+    ~InteractionScope() {
+        if(sink_ != nullptr)
+            sink_->end_interaction(user_, request_);
+    }
+
+    InteractionScope(const InteractionScope&) = delete;
+    InteractionScope& operator=(const InteractionScope&) = delete;
+
+    [[nodiscard]] const UserInteractionRequest& request() const noexcept {
+        return request_;
+    }
+
+private:
+    UserInteractionStateSink* sink_;
+    const UserContext& user_;
+    UserInteractionRequest request_;
+};
+
 class TerminalStateRestorer {
 public:
     TerminalStateRestorer() noexcept {
@@ -248,22 +277,24 @@ UserInteractionResult PamUserInteraction::request_presence(
     std::stop_token stop,
     KeepaliveState& keepalive
 ) {
+    InteractionScope interaction(stateSink_, user, request);
+    const auto& active_request = interaction.request();
     publish_state(
         stateSink_,
         user,
-        request,
+        active_request,
         UserInteractionState::presence_required
     );
     try {
         const bool approved = collect_consent(
-            presence_question(request.operation),
+            presence_question(active_request.operation),
             stop,
             keepalive
         ) && context_is_still_current(contextProvider_, user);
         publish_state(
             stateSink_,
             user,
-            request,
+            active_request,
             approved
                 ? UserInteractionState::presence_approved
                 : UserInteractionState::presence_denied
@@ -273,12 +304,12 @@ UserInteractionResult PamUserInteraction::request_presence(
             : UserInteractionResult::denied;
     } catch(const OperationCancelled&) {
         publish_state(
-            stateSink_, user, request, UserInteractionState::cancelled
+            stateSink_, user, active_request, UserInteractionState::cancelled
         );
         throw;
     } catch(const UserActionTimedOut&) {
         publish_state(
-            stateSink_, user, request, UserInteractionState::timed_out
+            stateSink_, user, active_request, UserInteractionState::timed_out
         );
         throw;
     }
@@ -290,10 +321,12 @@ UserInteractionResult PamUserInteraction::request_verification(
     std::stop_token stop,
     KeepaliveState& keepalive
 ) {
+    InteractionScope interaction(stateSink_, user, request);
+    const auto& active_request = interaction.request();
     publish_state(
         stateSink_,
         user,
-        request,
+        active_request,
         UserInteractionState::verification_started
     );
     try {
@@ -305,12 +338,12 @@ UserInteractionResult PamUserInteraction::request_verification(
             keepalive,
             stateSink_,
             user,
-            request
+            active_request
         ) == PAM_SUCCESS && context_is_still_current(contextProvider_, user);
         publish_state(
             stateSink_,
             user,
-            request,
+            active_request,
             approved
                 ? UserInteractionState::verification_succeeded
                 : UserInteractionState::verification_failed
@@ -320,12 +353,12 @@ UserInteractionResult PamUserInteraction::request_verification(
             : UserInteractionResult::denied;
     } catch(const OperationCancelled&) {
         publish_state(
-            stateSink_, user, request, UserInteractionState::cancelled
+            stateSink_, user, active_request, UserInteractionState::cancelled
         );
         throw;
     } catch(const UserActionTimedOut&) {
         publish_state(
-            stateSink_, user, request, UserInteractionState::timed_out
+            stateSink_, user, active_request, UserInteractionState::timed_out
         );
         throw;
     }

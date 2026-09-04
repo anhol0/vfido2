@@ -18,6 +18,7 @@ pkg_check_modules(SYSTEMD REQUIRED IMPORTED_TARGET libsystemd)
 add_library(vauth_dbus
     ${SOURCE_DIR}/dbus/agent_registry.cpp
     ${SOURCE_DIR}/dbus/agent_service.cpp
+    ${SOURCE_DIR}/dbus/interaction_registry.cpp
 )
 target_include_directories(vauth_dbus PUBLIC ${SOURCE_DIR})
 target_compile_definitions(vauth_dbus PRIVATE
