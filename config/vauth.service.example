@@ -3,7 +3,8 @@ Description=Lamellix Labs vAuth virtual authenticator
 After=systemd-udevd.service
 
 [Service]
-Type=simple
+Type=dbus
+BusName=org.lamellix.vAuth
 User=vauth
 Group=vauth
 ExecStart=/usr/local/bin/vauth run
