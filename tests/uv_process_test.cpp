@@ -122,6 +122,47 @@ bool test_child_status_events(const std::string& executable) {
     return true;
 }
 
+bool test_external_cancellation_interrupts_child(
+    const std::string& executable
+) {
+    std::atomic<bool> cancellation_requested = false;
+    std::atomic<bool> cancelled = false;
+    std::atomic<bool> unexpected_error = false;
+    const auto started = std::chrono::steady_clock::now();
+
+    std::jthread worker([&] {
+        try {
+            std::stop_source stop;
+            static_cast<void>(vauth::uv::run_cancellable_program(
+                executable,
+                {"--child-wait"},
+                stop.get_token(),
+                std::chrono::seconds(5),
+                {},
+                [&cancellation_requested] {
+                    return cancellation_requested.load();
+                }
+            ));
+        } catch(const UserInteractionCancelled&) {
+            cancelled = true;
+        } catch(...) {
+            unexpected_error = true;
+        }
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    cancellation_requested = true;
+    worker.join();
+
+    CHECK(cancelled);
+    CHECK(!unexpected_error);
+    CHECK(
+        std::chrono::steady_clock::now() - started <
+        std::chrono::seconds(1)
+    );
+    return true;
+}
+
 bool test_user_action_keepalive_scope() {
     KeepaliveState keepalive;
     CHECK(keepalive.get() == KeepaliveStatus::processing);
@@ -174,8 +215,9 @@ int main(int argc, char** argv) {
         test_cancellation_interrupts_child(executable) &&
         test_timeout_interrupts_child(executable) &&
         test_child_status_events(executable) &&
+        test_external_cancellation_interrupts_child(executable) &&
         test_user_action_keepalive_scope();
     if(success)
-        std::cout << "5/5 UV process tests passed\n";
+        std::cout << "6/6 UV process tests passed\n";
     return success ? 0 : 1;
 }

@@ -2,9 +2,12 @@
 #include "dbus/interaction_registry.hpp"
 #include "uv/src/user_interaction.hpp"
 
+#include <chrono>
 #include <iostream>
+#include <stop_token>
 #include <stdexcept>
 #include <string>
+#include <thread>
 
 namespace {
 
@@ -144,40 +147,40 @@ bool test_interaction_lifecycle() {
     }
     CHECK(competing_rejected);
 
-    interactions.transition(
+    CHECK(interactions.transition(
         user,
         first_id,
         UserInteractionState::verification_started
-    );
-    interactions.transition(
+    ));
+    CHECK(interactions.transition(
         user,
         first_id,
         UserInteractionState::fingerprint_required
-    );
-    interactions.transition(
+    ));
+    CHECK(interactions.transition(
         user,
         first_id,
         UserInteractionState::fingerprint_failed
-    );
-    interactions.transition(
+    ));
+    CHECK(interactions.transition(
         user,
         first_id,
         UserInteractionState::password_required
-    );
-    interactions.transition(
+    ));
+    CHECK(interactions.transition(
         user,
         first_id,
         UserInteractionState::verification_succeeded
-    );
+    ));
     CHECK(!interactions.current().has_value());
 
     bool stale_rejected = false;
     try {
-        interactions.transition(
+        static_cast<void>(interactions.transition(
             user,
             first_id,
             UserInteractionState::verification_failed
-        );
+        ));
     } catch(const std::runtime_error&) {
         stale_rejected = true;
     }
@@ -204,18 +207,18 @@ bool test_interaction_transition_validation() {
         "example.com"
     );
 
-    interactions.transition(
+    CHECK(interactions.transition(
         user,
         request_id,
         UserInteractionState::presence_required
-    );
+    ));
     bool invalid_rejected = false;
     try {
-        interactions.transition(
+        static_cast<void>(interactions.transition(
             user,
             request_id,
             UserInteractionState::fingerprint_required
-        );
+        ));
     } catch(const std::logic_error&) {
         invalid_rejected = true;
     }
@@ -231,12 +234,120 @@ bool test_interaction_transition_validation() {
     interactions.clear_for(wrong_user);
     CHECK(interactions.current().has_value());
 
-    interactions.transition(
+    CHECK(interactions.transition(
         user,
         request_id,
         UserInteractionState::presence_denied
-    );
+    ));
     CHECK(!interactions.current().has_value());
+    return true;
+}
+
+bool test_presence_responses_and_cancellation() {
+    vauth::dbus::AgentRegistry agents;
+    vauth::dbus::InteractionRegistry interactions;
+    const UserContext user = agents.register_agent(peer());
+
+    const uint64_t presence_id = interactions.begin(
+        user,
+        UserInteractionOperation::make_credential,
+        "example.com"
+    );
+    CHECK(interactions.transition(
+        user,
+        presence_id,
+        UserInteractionState::presence_required
+    ));
+    std::jthread responder([&] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        interactions.respond_to_presence(user, presence_id, true);
+    });
+    std::stop_source stop;
+    CHECK(
+        interactions.wait_for_presence(
+            user,
+            presence_id,
+            stop.get_token(),
+            std::chrono::seconds(1)
+        ) == vauth::dbus::PresenceWaitResult::approved
+    );
+    responder.join();
+
+    bool duplicate_rejected = false;
+    try {
+        interactions.respond_to_presence(user, presence_id, false);
+    } catch(const std::runtime_error&) {
+        duplicate_rejected = true;
+    }
+    CHECK(duplicate_rejected);
+    CHECK(interactions.transition(
+        user,
+        presence_id,
+        UserInteractionState::presence_approved
+    ));
+
+    const uint64_t verification_id = interactions.begin(
+        user,
+        UserInteractionOperation::get_assertion,
+        "example.com"
+    );
+    CHECK(interactions.transition(
+        user,
+        verification_id,
+        UserInteractionState::verification_started
+    ));
+    CHECK(!interactions.cancellation_requested(user, verification_id));
+    interactions.request_cancel(user, verification_id);
+    CHECK(interactions.cancellation_requested(user, verification_id));
+    CHECK(
+        interactions.wait_for_presence(
+            user,
+            verification_id,
+            stop.get_token(),
+            std::chrono::seconds(1)
+        ) == vauth::dbus::PresenceWaitResult::client_cancelled
+    );
+    CHECK(!interactions.transition(
+        user,
+        verification_id,
+        UserInteractionState::fingerprint_required
+    ));
+    CHECK(interactions.transition(
+        user,
+        verification_id,
+        UserInteractionState::cancelled
+    ));
+
+    const uint64_t timeout_id = interactions.begin(
+        user,
+        UserInteractionOperation::check_excluded_credential,
+        "example.com"
+    );
+    CHECK(interactions.transition(
+        user,
+        timeout_id,
+        UserInteractionState::presence_required
+    ));
+    CHECK(
+        interactions.wait_for_presence(
+            user,
+            timeout_id,
+            stop.get_token(),
+            std::chrono::milliseconds(1)
+        ) == vauth::dbus::PresenceWaitResult::timed_out
+    );
+    bool late_response_rejected = false;
+    try {
+        interactions.respond_to_presence(user, timeout_id, true);
+    } catch(const std::runtime_error&) {
+        late_response_rejected = true;
+    }
+    CHECK(late_response_rejected);
+    CHECK(interactions.transition(
+        user,
+        timeout_id,
+        UserInteractionState::timed_out
+    ));
     return true;
 }
 
@@ -248,8 +359,9 @@ int main() {
         test_invalid_identity_rejected() &&
         test_state_names() &&
         test_interaction_lifecycle() &&
-        test_interaction_transition_validation();
+        test_interaction_transition_validation() &&
+        test_presence_responses_and_cancellation();
     if(success)
-        std::cout << "5/5 D-Bus registry tests passed\n";
+        std::cout << "6/6 D-Bus registry tests passed\n";
     return success ? 0 : 1;
 }
