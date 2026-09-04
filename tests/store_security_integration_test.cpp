@@ -16,6 +16,7 @@
 #include "credentials/credential.hpp"
 #include "cryptography/store_security.hpp"
 #include "cryptography/tpm.hpp"
+#include "test_runner.hpp"
 
 namespace {
 
@@ -390,16 +391,21 @@ int main(int argc, char** argv) {
             throw std::invalid_argument("Missing integration test arguments");
         }
         const std::string mode = argv[1];
+        test_support::Runner runner;
         if(mode == "setup" && argc == 5) {
-            setup(argv[2], argv[3], argv[4]);
+            runner.run("setup", [&] {
+                setup(argv[2], argv[3], argv[4]);
+            });
         } else if(mode == "verify-tpm-clear" && argc == 3) {
-            verify_tpm_clear_is_rejected(argv[2]);
+            runner.run("verify_tpm_clear_is_rejected", [&] {
+                verify_tpm_clear_is_rejected(argv[2]);
+            });
         } else {
             throw std::invalid_argument("Invalid integration test arguments");
         }
+        return runner.finish();
     } catch(const std::exception& error) {
-        std::cerr << error.what() << '\n';
+        std::cerr << "Test invocation failed: " << error.what() << '\n';
         return 1;
     }
-    return 0;
 }

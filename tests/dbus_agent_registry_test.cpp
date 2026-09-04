@@ -1,5 +1,6 @@
 #include "dbus/agent_registry.hpp"
 #include "dbus/interaction_registry.hpp"
+#include "test_runner.hpp"
 #include "uv/src/user_interaction.hpp"
 
 #include <chrono>
@@ -354,14 +355,18 @@ bool test_presence_responses_and_cancellation() {
 }
 
 int main() {
-    const bool success =
-        test_registration_lifetime() &&
-        test_invalid_identity_rejected() &&
-        test_state_names() &&
-        test_interaction_lifecycle() &&
-        test_interaction_transition_validation() &&
-        test_presence_responses_and_cancellation();
-    if(success)
-        std::cout << "6/6 D-Bus registry tests passed\n";
-    return success ? 0 : 1;
+    test_support::Runner runner;
+    runner.run("test_registration_lifetime", test_registration_lifetime);
+    runner.run("test_invalid_identity_rejected", test_invalid_identity_rejected);
+    runner.run("test_state_names", test_state_names);
+    runner.run("test_interaction_lifecycle", test_interaction_lifecycle);
+    runner.run(
+        "test_interaction_transition_validation",
+        test_interaction_transition_validation
+    );
+    runner.run(
+        "test_presence_responses_and_cancellation",
+        test_presence_responses_and_cancellation
+    );
+    return runner.finish();
 }

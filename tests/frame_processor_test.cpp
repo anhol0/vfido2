@@ -12,6 +12,7 @@
 
 #include "frame_processor.hpp"
 #include "response.hpp"
+#include "test_runner.hpp"
 
 namespace {
     constexpr uint32_t CID_A = 0x01020304;
@@ -582,35 +583,21 @@ namespace {
 
 int main() {
     const std::vector<Test> tests{
-        {"single frame and report ID", test_single_frame_and_report_id},
-        {"multipart reassembly", test_multipart_reassembly},
-        {"partial message blocks another channel", test_partial_message_blocks_other_channel},
-        {"foreign continuation is ignored", test_foreign_continuation_is_ignored},
-        {"invalid sequence aborts assembly", test_invalid_sequence_aborts_assembly},
-        {"same-CID INIT resynchronizes", test_same_cid_init_resynchronizes},
-        {"timeout uses original deadline", test_timeout_uses_original_deadline},
-        {"active request arbitration", test_active_request_arbitration},
-        {"lengths, channels, and broadcast INIT", test_lengths_channels_and_broadcast_init},
-        {"maximum payload", test_maximum_payload},
-        {"outgoing payload bounds and lengths", test_outgoing_payload_bounds_and_lengths}
+        {"test_single_frame_and_report_id", test_single_frame_and_report_id},
+        {"test_multipart_reassembly", test_multipart_reassembly},
+        {"test_partial_message_blocks_other_channel", test_partial_message_blocks_other_channel},
+        {"test_foreign_continuation_is_ignored", test_foreign_continuation_is_ignored},
+        {"test_invalid_sequence_aborts_assembly", test_invalid_sequence_aborts_assembly},
+        {"test_same_cid_init_resynchronizes", test_same_cid_init_resynchronizes},
+        {"test_timeout_uses_original_deadline", test_timeout_uses_original_deadline},
+        {"test_active_request_arbitration", test_active_request_arbitration},
+        {"test_lengths_channels_and_broadcast_init", test_lengths_channels_and_broadcast_init},
+        {"test_maximum_payload", test_maximum_payload},
+        {"test_outgoing_payload_bounds_and_lengths", test_outgoing_payload_bounds_and_lengths}
     };
 
-    std::size_t failed = 0;
-    for(const auto& [name, test] : tests) {
-        try {
-            test();
-            std::cout << "PASS: " << name << '\n';
-        } catch(const std::exception& error) {
-            ++failed;
-            std::cerr << "FAIL: " << name << ": " << error.what() << '\n';
-        }
-    }
-
-    if(failed != 0) {
-        std::cerr << failed << " test(s) failed\n";
-        return 1;
-    }
-
-    std::cout << tests.size() << " test(s) passed\n";
-    return 0;
+    test_support::Runner runner;
+    for(const auto& [name, test] : tests)
+        runner.run(name, test);
+    return runner.finish();
 }

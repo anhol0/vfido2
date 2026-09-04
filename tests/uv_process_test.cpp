@@ -1,5 +1,6 @@
 #include "cancellation.hpp"
 #include "keepalive.hpp"
+#include "test_runner.hpp"
 #include "uv/src/auth_handler_status.hpp"
 #include "uv/src/cancellable_process.hpp"
 
@@ -210,14 +211,25 @@ int main(int argc, char** argv) {
     }
 
     const std::string executable = std::filesystem::canonical(argv[0]);
-    const bool success =
-        test_exit_status(executable) &&
-        test_cancellation_interrupts_child(executable) &&
-        test_timeout_interrupts_child(executable) &&
-        test_child_status_events(executable) &&
-        test_external_cancellation_interrupts_child(executable) &&
-        test_user_action_keepalive_scope();
-    if(success)
-        std::cout << "6/6 UV process tests passed\n";
-    return success ? 0 : 1;
+    test_support::Runner runner;
+    runner.run("test_exit_status", [&] {
+        return test_exit_status(executable);
+    });
+    runner.run("test_cancellation_interrupts_child", [&] {
+        return test_cancellation_interrupts_child(executable);
+    });
+    runner.run("test_timeout_interrupts_child", [&] {
+        return test_timeout_interrupts_child(executable);
+    });
+    runner.run("test_child_status_events", [&] {
+        return test_child_status_events(executable);
+    });
+    runner.run("test_external_cancellation_interrupts_child", [&] {
+        return test_external_cancellation_interrupts_child(executable);
+    });
+    runner.run(
+        "test_user_action_keepalive_scope",
+        test_user_action_keepalive_scope
+    );
+    return runner.finish();
 }

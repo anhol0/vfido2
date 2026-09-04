@@ -9,6 +9,7 @@
 
 #include "authentication/authenticate.hpp"
 #include "registration/registration.hpp"
+#include "test_runner.hpp"
 
 namespace {
     void check(bool condition, const char* expression, int line) {
@@ -707,48 +708,34 @@ namespace {
 
 int main() {
     const std::vector<Test> tests{
-        {"valid MakeCredential", test_valid_make_credential},
-        {"MakeCredential rk option", test_make_credential_parses_rk_option},
-        {"MakeCredential up option", test_make_credential_rejects_up_option},
-        {"MakeCredential unsupported extensions", test_make_credential_ignores_unsupported_extensions},
-        {"MakeCredential malformed extensions", test_make_credential_rejects_malformed_extensions},
-        {"MakeCredential PIN parameters", test_make_credential_rejects_pin_parameters},
-        {"unknown options", test_unknown_options_are_ignored},
-        {"MakeCredential bad hash", test_make_credential_rejects_bad_hash},
-        {"MakeCredential missing nested field", test_make_credential_rejects_missing_nested_field},
-        {"duplicate top-level parameter", test_duplicate_top_level_parameter_is_rejected},
-        {"unknown parameter", test_unknown_parameter_is_consumed},
-        {"GetAssertion unsupported field priority", test_get_assertion_unsupported_field_priority},
-        {"GetAssertion unsupported extensions", test_get_assertion_ignores_unsupported_extensions},
-        {"GetAssertion malformed extensions", test_get_assertion_rejects_malformed_extensions},
-        {"GetAssertion PIN parameters", test_get_assertion_rejects_pin_parameters},
-        {"GetAssertion wrong option type", test_get_assertion_rejects_wrong_option_type},
-        {"GetAssertion rk option presence", test_get_assertion_tracks_rk_option_presence},
-        {"GetAssertion wrong rk type", test_get_assertion_rejects_wrong_rk_option_type},
-        {"unsupported state reset", test_unsupported_state_is_cleared},
-        {"GetAssertion empty credential ID", test_get_assertion_rejects_empty_credential_id},
-        {"GetAssertion interaction and flags", test_assertion_interaction_and_flags},
-        {"GetNextAssertion state", test_assertion_sequence_channel_timeout_and_exhaustion},
-        {"GetNextAssertion user session", test_assertion_sequence_is_bound_to_user_session},
-        {"trailing data", test_trailing_data_is_rejected}
+        {"test_valid_make_credential", test_valid_make_credential},
+        {"test_make_credential_parses_rk_option", test_make_credential_parses_rk_option},
+        {"test_make_credential_rejects_up_option", test_make_credential_rejects_up_option},
+        {"test_make_credential_ignores_unsupported_extensions", test_make_credential_ignores_unsupported_extensions},
+        {"test_make_credential_rejects_malformed_extensions", test_make_credential_rejects_malformed_extensions},
+        {"test_make_credential_rejects_pin_parameters", test_make_credential_rejects_pin_parameters},
+        {"test_unknown_options_are_ignored", test_unknown_options_are_ignored},
+        {"test_make_credential_rejects_bad_hash", test_make_credential_rejects_bad_hash},
+        {"test_make_credential_rejects_missing_nested_field", test_make_credential_rejects_missing_nested_field},
+        {"test_duplicate_top_level_parameter_is_rejected", test_duplicate_top_level_parameter_is_rejected},
+        {"test_unknown_parameter_is_consumed", test_unknown_parameter_is_consumed},
+        {"test_get_assertion_unsupported_field_priority", test_get_assertion_unsupported_field_priority},
+        {"test_get_assertion_ignores_unsupported_extensions", test_get_assertion_ignores_unsupported_extensions},
+        {"test_get_assertion_rejects_malformed_extensions", test_get_assertion_rejects_malformed_extensions},
+        {"test_get_assertion_rejects_pin_parameters", test_get_assertion_rejects_pin_parameters},
+        {"test_get_assertion_rejects_wrong_option_type", test_get_assertion_rejects_wrong_option_type},
+        {"test_get_assertion_tracks_rk_option_presence", test_get_assertion_tracks_rk_option_presence},
+        {"test_get_assertion_rejects_wrong_rk_option_type", test_get_assertion_rejects_wrong_rk_option_type},
+        {"test_unsupported_state_is_cleared", test_unsupported_state_is_cleared},
+        {"test_get_assertion_rejects_empty_credential_id", test_get_assertion_rejects_empty_credential_id},
+        {"test_assertion_interaction_and_flags", test_assertion_interaction_and_flags},
+        {"test_assertion_sequence_channel_timeout_and_exhaustion", test_assertion_sequence_channel_timeout_and_exhaustion},
+        {"test_assertion_sequence_is_bound_to_user_session", test_assertion_sequence_is_bound_to_user_session},
+        {"test_trailing_data_is_rejected", test_trailing_data_is_rejected}
     };
 
-    std::size_t failed = 0;
-    for(const auto& [name, test] : tests) {
-        try {
-            test();
-            std::cout << "PASS: " << name << '\n';
-        } catch(const std::exception& error) {
-            ++failed;
-            std::cerr << "FAIL: " << name << ": " << error.what() << '\n';
-        }
-    }
-
-    if(failed != 0) {
-        std::cerr << failed << " test(s) failed\n";
-        return 1;
-    }
-
-    std::cout << tests.size() << " test(s) passed\n";
-    return 0;
+    test_support::Runner runner;
+    for(const auto& [name, test] : tests)
+        runner.run(name, test);
+    return runner.finish();
 }

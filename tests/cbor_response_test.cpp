@@ -1,6 +1,7 @@
 #include "cbor_operations/cbor.hpp"
 #include "cbor_operations/cbor_utils.hpp"
 #include "const.hpp"
+#include "test_runner.hpp"
 #include "uhid_report.hpp"
 
 #include <algorithm>
@@ -385,30 +386,16 @@ using Test = std::pair<const char*, void (*)()>;
 
 int main() {
     const std::vector<Test> tests{
-        {"GetInfo response", test_get_info_response},
-        {"COSE key", test_cose_key},
-        {"MakeCredential response", test_make_credential_response},
-        {"minimal assertion response", test_minimal_assertion_response},
-        {"assertion identity and map sizes", test_assertion_identity_and_map_sizes},
-        {"typed encoding failures", test_encoding_failures_are_typed}
+        {"test_get_info_response", test_get_info_response},
+        {"test_cose_key", test_cose_key},
+        {"test_make_credential_response", test_make_credential_response},
+        {"test_minimal_assertion_response", test_minimal_assertion_response},
+        {"test_assertion_identity_and_map_sizes", test_assertion_identity_and_map_sizes},
+        {"test_encoding_failures_are_typed", test_encoding_failures_are_typed}
     };
 
-    std::size_t failed = 0;
-    for(const auto& [name, test] : tests) {
-        try {
-            test();
-            std::cout << "PASS: " << name << '\n';
-        } catch(const std::exception& error) {
-            ++failed;
-            std::cerr << "FAIL: " << name << ": " << error.what() << '\n';
-        }
-    }
-
-    if(failed != 0) {
-        std::cerr << failed << " test(s) failed\n";
-        return 1;
-    }
-
-    std::cout << tests.size() << " test(s) passed\n";
-    return 0;
+    test_support::Runner runner;
+    for(const auto& [name, test] : tests)
+        runner.run(name, test);
+    return runner.finish();
 }

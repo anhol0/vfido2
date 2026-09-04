@@ -22,6 +22,7 @@
 
 #include "credentials/credential.hpp"
 #include "cryptography/crypto.hpp"
+#include "test_runner.hpp"
 
 namespace {
 
@@ -1045,40 +1046,37 @@ void test_wrong_key_size_is_rejected() {
 } // namespace
 
 int main() {
-    try {
-        test_sha256();
-        test_hex_decoder_rejects_malformed_input();
-        test_credential_store_round_trip();
-        test_discoverability_schema_is_required();
-        test_discoverable_credential_replaces_same_rp_account();
-        test_non_discoverable_credentials_do_not_replace_each_other();
-        test_assertion_selection_respects_discoverability_and_rp();
-        test_credential_access_is_scoped_to_local_owner();
-        test_credential_lookup_for_rp_is_scoped();
-        test_failed_discoverable_replacement_preserves_old_credential();
-        test_repeated_save_replaces_database_durably();
-        test_failed_replacement_rolls_back_and_removes_temporary_file();
-        test_signature_counter_overflow_is_rejected();
-        test_duplicate_credential_id_is_rejected();
-        test_invalid_blob_values_are_rejected();
-        test_modified_ciphertext_is_rejected();
-        test_authenticated_header_rejects_generation_tampering();
-        test_rollback_is_rejected();
-        test_interrupted_commit_is_reconciled_after_authentication();
-        test_failed_counter_commit_requires_reload_and_recovers();
-        test_development_clear_commits_empty_store();
-        test_development_clear_recovers_after_counter_failure();
-        test_store_process_lock_rejects_concurrent_owner();
-        test_missing_store_with_nonzero_counter_is_rejected();
-        test_insecure_file_permissions_are_rejected();
-        test_symlink_store_is_rejected();
-        test_oversized_store_is_rejected_before_reading();
-        test_wrong_key_size_is_rejected();
-    } catch(const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
-    }
-
-    std::cout << "crypto tests passed\n";
-    return 0;
+    test_support::Runner runner;
+    runner.run("test_sha256", test_sha256);
+    runner.run(
+        "test_hex_decoder_rejects_malformed_input",
+        test_hex_decoder_rejects_malformed_input
+    );
+    runner.run("test_credential_store_round_trip", test_credential_store_round_trip);
+    runner.run("test_discoverability_schema_is_required", test_discoverability_schema_is_required);
+    runner.run("test_discoverable_credential_replaces_same_rp_account", test_discoverable_credential_replaces_same_rp_account);
+    runner.run("test_non_discoverable_credentials_do_not_replace_each_other", test_non_discoverable_credentials_do_not_replace_each_other);
+    runner.run("test_assertion_selection_respects_discoverability_and_rp", test_assertion_selection_respects_discoverability_and_rp);
+    runner.run("test_credential_access_is_scoped_to_local_owner", test_credential_access_is_scoped_to_local_owner);
+    runner.run("test_credential_lookup_for_rp_is_scoped", test_credential_lookup_for_rp_is_scoped);
+    runner.run("test_failed_discoverable_replacement_preserves_old_credential", test_failed_discoverable_replacement_preserves_old_credential);
+    runner.run("test_repeated_save_replaces_database_durably", test_repeated_save_replaces_database_durably);
+    runner.run("test_failed_replacement_rolls_back_and_removes_temporary_file", test_failed_replacement_rolls_back_and_removes_temporary_file);
+    runner.run("test_signature_counter_overflow_is_rejected", test_signature_counter_overflow_is_rejected);
+    runner.run("test_duplicate_credential_id_is_rejected", test_duplicate_credential_id_is_rejected);
+    runner.run("test_invalid_blob_values_are_rejected", test_invalid_blob_values_are_rejected);
+    runner.run("test_modified_ciphertext_is_rejected", test_modified_ciphertext_is_rejected);
+    runner.run("test_authenticated_header_rejects_generation_tampering", test_authenticated_header_rejects_generation_tampering);
+    runner.run("test_rollback_is_rejected", test_rollback_is_rejected);
+    runner.run("test_interrupted_commit_is_reconciled_after_authentication", test_interrupted_commit_is_reconciled_after_authentication);
+    runner.run("test_failed_counter_commit_requires_reload_and_recovers", test_failed_counter_commit_requires_reload_and_recovers);
+    runner.run("test_development_clear_commits_empty_store", test_development_clear_commits_empty_store);
+    runner.run("test_development_clear_recovers_after_counter_failure", test_development_clear_recovers_after_counter_failure);
+    runner.run("test_store_process_lock_rejects_concurrent_owner", test_store_process_lock_rejects_concurrent_owner);
+    runner.run("test_missing_store_with_nonzero_counter_is_rejected", test_missing_store_with_nonzero_counter_is_rejected);
+    runner.run("test_insecure_file_permissions_are_rejected", test_insecure_file_permissions_are_rejected);
+    runner.run("test_symlink_store_is_rejected", test_symlink_store_is_rejected);
+    runner.run("test_oversized_store_is_rejected_before_reading", test_oversized_store_is_rejected_before_reading);
+    runner.run("test_wrong_key_size_is_rejected", test_wrong_key_size_is_rejected);
+    return runner.finish();
 }
