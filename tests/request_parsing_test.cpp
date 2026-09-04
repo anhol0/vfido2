@@ -530,7 +530,7 @@ namespace {
 
     UserContext session_user_context(
         std::string session_id = "session-1",
-        std::string agent_bus_name = ":1.42",
+        std::string interaction_agent_id = ":1.42",
         uint64_t generation = 7
     ) {
         return {
@@ -538,7 +538,7 @@ namespace {
             .name = "alice",
             .session = UserSessionContext{
                 .sessionId = std::move(session_id),
-                .agentBusName = std::move(agent_bus_name),
+                .interactionAgentId = std::move(interaction_agent_id),
                 .generation = generation
             }
         };

@@ -1,9 +1,12 @@
 #include "cancellation.hpp"
 #include "keepalive.hpp"
+#include "uv/src/auth_handler_status.hpp"
 #include "uv/src/cancellable_process.hpp"
 
 #include <atomic>
+#include <array>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <iostream>
 #include <stop_token>
@@ -11,6 +14,7 @@
 #include <string>
 #include <thread>
 #include <unistd.h>
+#include <vector>
 
 namespace {
 
@@ -90,6 +94,34 @@ bool test_timeout_interrupts_child(const std::string& executable) {
     return true;
 }
 
+bool test_child_status_events(const std::string& executable) {
+    std::stop_source stop;
+    std::vector<uint8_t> received;
+    CHECK(vauth::uv::run_cancellable_program(
+        executable,
+        {"--child-status"},
+        stop.get_token(),
+        std::chrono::seconds(1),
+        [&received](uint8_t status) {
+            received.push_back(status);
+        }
+    ) == 0);
+
+    const std::vector<uint8_t> expected{
+        static_cast<uint8_t>(
+            vauth::uv::AuthHandlerStatus::fingerprint_required
+        ),
+        static_cast<uint8_t>(
+            vauth::uv::AuthHandlerStatus::fingerprint_failed
+        ),
+        static_cast<uint8_t>(
+            vauth::uv::AuthHandlerStatus::password_required
+        )
+    };
+    CHECK(received == expected);
+    return true;
+}
+
 bool test_user_action_keepalive_scope() {
     KeepaliveState keepalive;
     CHECK(keepalive.get() == KeepaliveStatus::processing);
@@ -117,14 +149,33 @@ int main(int argc, char** argv) {
         while(true)
             pause();
     }
+    if(argc == 2 && std::string(argv[1]) == "--child-status") {
+        const std::array<uint8_t, 3> statuses{
+            static_cast<uint8_t>(
+                vauth::uv::AuthHandlerStatus::fingerprint_required
+            ),
+            static_cast<uint8_t>(
+                vauth::uv::AuthHandlerStatus::fingerprint_failed
+            ),
+            static_cast<uint8_t>(
+                vauth::uv::AuthHandlerStatus::password_required
+            )
+        };
+        return write(
+            vauth::uv::AUTH_HANDLER_STATUS_FD,
+            statuses.data(),
+            statuses.size()
+        ) == static_cast<ssize_t>(statuses.size()) ? 0 : 1;
+    }
 
     const std::string executable = std::filesystem::canonical(argv[0]);
     const bool success =
         test_exit_status(executable) &&
         test_cancellation_interrupts_child(executable) &&
         test_timeout_interrupts_child(executable) &&
+        test_child_status_events(executable) &&
         test_user_action_keepalive_scope();
     if(success)
-        std::cout << "4/4 UV process tests passed\n";
+        std::cout << "5/5 UV process tests passed\n";
     return success ? 0 : 1;
 }

@@ -72,6 +72,20 @@ add_test(
     COMMAND uv_process_tests
 )
 
+add_executable(dbus_agent_registry_tests
+    dbus_agent_registry_test.cpp
+    ${PROJECT_SOURCE_DIR}/src/dbus/agent_registry.cpp
+)
+
+target_include_directories(dbus_agent_registry_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/src
+)
+
+add_test(
+    NAME dbus_agent_registry
+    COMMAND dbus_agent_registry_tests
+)
+
 add_executable(crypto_tests
     crypto_test.cpp
     ${PROJECT_SOURCE_DIR}/src/cryptography/crypto.cpp
