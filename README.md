@@ -38,8 +38,8 @@ sudo busctl call org.freedesktop.DBus /org/freedesktop/DBus \
 ```
 
 Debug builds also produce `build/vauth-agent-debug`. Run it as the desktop user
-to register once with the daemon and print the targeted interaction-state
-signals that a future Slint UI will consume.
+to register once with the daemon, answer presence prompts, and print the
+targeted interaction-state signals that a future Slint UI will consume.
 
 ## Provision database security objects
 
