@@ -520,6 +520,30 @@ namespace {
         };
     }
 
+    UserContext local_user_context(uint32_t uid = 1000) {
+        return {
+            .uid = uid,
+            .name = uid == 1000 ? "alice" : "bob",
+            .session = std::nullopt
+        };
+    }
+
+    UserContext session_user_context(
+        std::string session_id = "session-1",
+        std::string agent_bus_name = ":1.42",
+        uint64_t generation = 7
+    ) {
+        return {
+            .uid = 1000,
+            .name = "alice",
+            .session = UserSessionContext{
+                .sessionId = std::move(session_id),
+                .agentBusName = std::move(agent_bus_name),
+                .generation = generation
+            }
+        };
+    }
+
     void test_assertion_interaction_and_flags() {
         CHECK(
             assertion_interaction(false, false) ==
@@ -553,20 +577,21 @@ namespace {
         constexpr uint32_t origin_cid = 0x01020304;
         constexpr uint32_t foreign_cid = 0x05060708;
         const auto start = AssertionSequence::Clock::time_point{};
+        const auto user_context = local_user_context();
         AssertionSequence sequence;
         sequence.begin(
             origin_cid,
-            1000,
+            user_context,
             {assertion_credential(0x11), assertion_credential(0x22)},
             start
         );
 
-        CHECK(!sequence.next(foreign_cid, 1000, start).has_value());
+        CHECK(!sequence.next(foreign_cid, user_context, start).has_value());
         CHECK(sequence.origin_cid() == origin_cid);
 
         const auto first = sequence.next(
             origin_cid,
-            1000,
+            user_context,
             start + std::chrono::seconds(30)
         );
         CHECK(first.has_value());
@@ -575,24 +600,24 @@ namespace {
 
         const auto second = sequence.next(
             origin_cid,
-            1000,
+            user_context,
             start + std::chrono::seconds(60)
         );
         CHECK(second.has_value());
         CHECK(second->id == std::vector<uint8_t>(16, 0x22));
         CHECK(sequence.origin_cid() == 0);
-        CHECK(!sequence.next(origin_cid, 1000, start).has_value());
+        CHECK(!sequence.next(origin_cid, user_context, start).has_value());
 
         sequence.begin(
             origin_cid,
-            1000,
+            user_context,
             {assertion_credential(0x33)},
             start
         );
         CHECK(
             !sequence.next(
                 origin_cid,
-                1000,
+                user_context,
                 start + std::chrono::seconds(31)
             ).has_value()
         );
@@ -600,11 +625,17 @@ namespace {
 
         sequence.begin(
             origin_cid,
-            1000,
+            user_context,
             {assertion_credential(0x44)},
             start
         );
-        CHECK(!sequence.next(origin_cid, 1001, start).has_value());
+        CHECK(
+            !sequence.next(
+                origin_cid,
+                local_user_context(1001),
+                start
+            ).has_value()
+        );
         CHECK(sequence.origin_cid() == 0);
 
         auto foreign_credential = assertion_credential(0x55);
@@ -613,7 +644,7 @@ namespace {
         try {
             sequence.begin(
                 origin_cid,
-                1000,
+                user_context,
                 {std::move(foreign_credential)},
                 start
             );
@@ -622,6 +653,45 @@ namespace {
         }
         CHECK(mixed_owner_rejected);
         CHECK(sequence.origin_cid() == 0);
+    }
+
+    void test_assertion_sequence_is_bound_to_user_session() {
+        constexpr uint32_t origin_cid = 0x01020304;
+        const auto start = AssertionSequence::Clock::time_point{};
+        const auto original_context = session_user_context();
+        const std::vector<UserContext> changed_contexts{
+            session_user_context("session-2", ":1.42", 7),
+            session_user_context("session-1", ":1.43", 7),
+            session_user_context("session-1", ":1.42", 8),
+            local_user_context()
+        };
+
+        for(const auto& changed_context : changed_contexts) {
+            AssertionSequence sequence;
+            sequence.begin(
+                origin_cid,
+                original_context,
+                {assertion_credential(0x66)},
+                start
+            );
+            CHECK(
+                !sequence.next(
+                    origin_cid,
+                    changed_context,
+                    start
+                ).has_value()
+            );
+            CHECK(sequence.origin_cid() == 0);
+        }
+
+        AssertionSequence sequence;
+        sequence.begin(
+            origin_cid,
+            original_context,
+            {assertion_credential(0x77)},
+            start
+        );
+        CHECK(sequence.next(origin_cid, original_context, start).has_value());
     }
 
     void test_trailing_data_is_rejected() {
@@ -659,6 +729,7 @@ int main() {
         {"GetAssertion empty credential ID", test_get_assertion_rejects_empty_credential_id},
         {"GetAssertion interaction and flags", test_assertion_interaction_and_flags},
         {"GetNextAssertion state", test_assertion_sequence_channel_timeout_and_exhaustion},
+        {"GetNextAssertion user session", test_assertion_sequence_is_bound_to_user_session},
         {"trailing data", test_trailing_data_is_rejected}
     };
 
