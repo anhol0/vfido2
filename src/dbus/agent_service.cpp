@@ -1,6 +1,7 @@
 #include "agent_service.hpp"
 
 #include "agent_registry.hpp"
+#include "cancellation.hpp"
 #include "constants.hpp"
 #include "interaction_registry.hpp"
 
@@ -247,9 +248,33 @@ public:
             "relyingPartyId"
         );
 
+        auto presence_method = sdbus::registerMethod(
+            std::string(RESPOND_TO_PRESENCE_METHOD)
+        );
+        presence_method.inputSignature = sdbus::Signature{"ttb"};
+        presence_method.inputParamNames = {
+            "generation",
+            "requestId",
+            "approved"
+        };
+        presence_method.callbackHandler = [this](sdbus::MethodCall call) {
+            respond_to_presence(std::move(call));
+        };
+
+        auto cancel_method = sdbus::registerMethod(
+            std::string(CANCEL_INTERACTION_METHOD)
+        );
+        cancel_method.inputSignature = sdbus::Signature{"tt"};
+        cancel_method.inputParamNames = {"generation", "requestId"};
+        cancel_method.callbackHandler = [this](sdbus::MethodCall call) {
+            cancel_interaction(std::move(call));
+        };
+
         vtable_ = object_->addVTable(
             std::move(register_method),
             std::move(unregister_method),
+            std::move(presence_method),
+            std::move(cancel_method),
             std::move(state_signal)
         ).forInterface(std::string(INTERFACE_NAME), sdbus::return_slot);
 
@@ -327,11 +352,13 @@ public:
         ) {
             return;
         }
-        interactions_.transition(
+        if(!interactions_.transition(
             user,
             request.requestId,
             state
-        );
+        )) {
+            return;
+        }
 
         {
             std::lock_guard lock(queueMutex_);
@@ -356,7 +383,129 @@ public:
         ));
     }
 
+    [[nodiscard]] UserInteractionResult wait_for_presence(
+        const UserContext& user,
+        const UserInteractionRequest& request,
+        std::stop_token stop,
+        std::chrono::steady_clock::duration timeout
+    ) {
+        throw_if_failed();
+        switch(interactions_.wait_for_presence(
+            user,
+            request.requestId,
+            stop,
+            timeout
+        )) {
+            case PresenceWaitResult::approved:
+                return UserInteractionResult::approved;
+            case PresenceWaitResult::denied:
+                return UserInteractionResult::denied;
+            case PresenceWaitResult::timed_out:
+                throw UserActionTimedOut{};
+            case PresenceWaitResult::client_cancelled:
+                return UserInteractionResult::cancelled;
+            case PresenceWaitResult::platform_cancelled:
+            case PresenceWaitResult::invalidated:
+                throw OperationCancelled{};
+        }
+        throw std::logic_error("Unknown presence response state");
+    }
+
+    [[nodiscard]] bool cancellation_requested(
+        const UserContext& user,
+        const UserInteractionRequest& request
+    ) const noexcept {
+        try {
+            throw_if_failed();
+            if(!registry_.is_current(user))
+                return true;
+            return interactions_.cancellation_requested(
+                user,
+                request.requestId
+            );
+        } catch(...) {
+            return true;
+        }
+    }
+
 private:
+    [[nodiscard]] UserContext registered_caller(
+        const sdbus::MethodCall& call,
+        uint64_t generation
+    ) {
+        const char* sender = call.getSender();
+        const auto current = registry_.current_context();
+        if(
+            sender == nullptr ||
+            sender[0] != ':' ||
+            !current ||
+            !current->session ||
+            current->session->interactionAgentId != sender ||
+            current->session->generation != generation
+        ) {
+            throw std::runtime_error("Calling agent registration is stale");
+        }
+        if(!session_is_still_active(*current)) {
+            interactions_.clear_for(*current);
+            static_cast<void>(registry_.unregister_agent(sender));
+            throw std::runtime_error("Calling agent session is not active");
+        }
+        return *current;
+    }
+
+    void respond_to_presence(sdbus::MethodCall call) noexcept {
+        try {
+            uint64_t generation = 0;
+            uint64_t request_id = 0;
+            bool approved = false;
+            call >> generation >> request_id >> approved;
+            const UserContext user = registered_caller(call, generation);
+            interactions_.respond_to_presence(user, request_id, approved);
+            call.createReply().send();
+#ifdef DEBUG
+            std::cerr << ANSI_PURPLE
+                      << "D-Bus: received RespondToPresence"
+                      << ANSI_RESET << '\n';
+#endif
+        } catch(const std::exception& error) {
+            try {
+                call.createErrorReply(sdbus::Error{
+                    sdbus::Error::Name{
+                        "org.lamellix.vAuth.Error.InvalidInteraction"
+                    },
+                    error.what()
+                }).send();
+            } catch(...) {
+            }
+        }
+    }
+
+    void cancel_interaction(sdbus::MethodCall call) noexcept {
+        try {
+            uint64_t generation = 0;
+            uint64_t request_id = 0;
+            call >> generation >> request_id;
+            const UserContext user = registered_caller(call, generation);
+            interactions_.request_cancel(user, request_id);
+            call.createReply().send();
+#ifdef DEBUG
+            std::cerr << ANSI_PURPLE
+                      << "D-Bus: received CancelInteraction"
+                      << ANSI_RESET << '\n';
+#endif
+        } catch(const std::exception& error) {
+            try {
+                call.createErrorReply(sdbus::Error{
+                    sdbus::Error::Name{
+                        "org.lamellix.vAuth.Error.InvalidInteraction"
+                    },
+                    error.what()
+                }).send();
+            } catch(...) {
+            }
+        }
+    }
+
     void register_agent(sdbus::MethodCall call) noexcept {
         try {
             AgentPeer peer = resolve_peer(call);
@@ -614,6 +763,22 @@ void AgentService::end_interaction(
     const UserInteractionRequest& request
 ) noexcept {
     impl_->end_interaction(user, request);
+}
+
+UserInteractionResult AgentService::wait_for_presence(
+    const UserContext& user,
+    const UserInteractionRequest& request,
+    std::stop_token stop,
+    std::chrono::steady_clock::duration timeout
+) {
+    return impl_->wait_for_presence(user, request, stop, timeout);
+}
+
+bool AgentService::cancellation_requested(
+    const UserContext& user,
+    const UserInteractionRequest& request
+) const noexcept {
+    return impl_->cancellation_requested(user, request);
 }
 
 }

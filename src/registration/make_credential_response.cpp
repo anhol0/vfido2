@@ -47,6 +47,13 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(
                     keepalive
                 );
                 cancellation_point(stop);
+                if(presence == UserInteractionResult::cancelled) {
+                    return {
+                        static_cast<uint8_t>(
+                            CTAPError::CTAP2_ERR_OPERATION_DENIED
+                        )
+                    };
+                }
                 if(presence != UserInteractionResult::approved) {
                     return {
                         static_cast<uint8_t>(
@@ -95,6 +102,13 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(
                 keepalive
             );
             cancellation_point(stop);
+            if(verification == UserInteractionResult::cancelled) {
+                return {
+                    static_cast<uint8_t>(
+                        CTAPError::CTAP2_ERR_OPERATION_DENIED
+                    )
+                };
+            }
             if(verification != UserInteractionResult::approved) {
                 return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_UV_BLOCKED)};
             } else { break; }
@@ -111,6 +125,13 @@ std::vector<uint8_t> CTAPMakeCredentialRequest::build_response(
             );
             cancellation_point(stop);
 
+            if(presence == UserInteractionResult::cancelled) {
+                return {
+                    static_cast<uint8_t>(
+                        CTAPError::CTAP2_ERR_OPERATION_DENIED
+                    )
+                };
+            }
             if(presence != UserInteractionResult::approved) {
                 return {static_cast<uint8_t>(CTAPError::CTAP2_ERR_OPERATION_DENIED)};
             } else { break; }

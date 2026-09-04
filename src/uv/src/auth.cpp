@@ -25,13 +25,13 @@ namespace {
 constexpr auto USER_ACTION_TIMEOUT = std::chrono::seconds(30);
 
 void publish_state(
-    UserInteractionStateSink* sink,
+    UserInteractionChannel* channel,
     const UserContext& user,
     const UserInteractionRequest& request,
     UserInteractionState state
 ) {
-    if(sink != nullptr)
-        sink->publish_state(user, request, state);
+    if(channel != nullptr)
+        channel->publish_state(user, request, state);
 }
 
 bool context_is_still_current(
@@ -49,17 +49,18 @@ bool context_is_still_current(
 class InteractionScope {
 public:
     InteractionScope(
-        UserInteractionStateSink* sink,
+        UserInteractionChannel* channel,
         const UserContext& user,
         const UserInteractionRequest& request
-    ) : sink_(sink), user_(user), request_(request) {
-        if(sink_ != nullptr)
-            request_.requestId = sink_->begin_interaction(user_, request_);
+    ) : channel_(channel), user_(user), request_(request) {
+        if(channel_ != nullptr) {
+            request_.requestId = channel_->begin_interaction(user_, request_);
+        }
     }
 
     ~InteractionScope() {
-        if(sink_ != nullptr)
-            sink_->end_interaction(user_, request_);
+        if(channel_ != nullptr)
+            channel_->end_interaction(user_, request_);
     }
 
     InteractionScope(const InteractionScope&) = delete;
@@ -70,7 +71,7 @@ public:
     }
 
 private:
-    UserInteractionStateSink* sink_;
+    UserInteractionChannel* channel_;
     const UserContext& user_;
     UserInteractionRequest request_;
 };
@@ -112,7 +113,7 @@ int authenticate_user(
     const std::string& confdir,
     std::stop_token stop,
     KeepaliveState& keepalive,
-    UserInteractionStateSink* state_sink,
+    UserInteractionChannel* interaction_channel,
     const UserContext& user,
     const UserInteractionRequest& request
 ) {
@@ -130,11 +131,11 @@ int authenticate_user(
         },
         stop,
         USER_ACTION_TIMEOUT,
-        [state_sink, &user, &request](uint8_t raw_status) {
+        [interaction_channel, &user, &request](uint8_t raw_status) {
             switch(static_cast<vauth::uv::AuthHandlerStatus>(raw_status)) {
                 case vauth::uv::AuthHandlerStatus::fingerprint_required:
                     publish_state(
-                        state_sink,
+                        interaction_channel,
                         user,
                         request,
                         UserInteractionState::fingerprint_required
@@ -142,7 +143,7 @@ int authenticate_user(
                     break;
                 case vauth::uv::AuthHandlerStatus::fingerprint_failed:
                     publish_state(
-                        state_sink,
+                        interaction_channel,
                         user,
                         request,
                         UserInteractionState::fingerprint_failed
@@ -150,13 +151,19 @@ int authenticate_user(
                     break;
                 case vauth::uv::AuthHandlerStatus::password_required:
                     publish_state(
-                        state_sink,
+                        interaction_channel,
                         user,
                         request,
                         UserInteractionState::password_required
                     );
                     break;
             }
+        },
+        [interaction_channel, &user, &request] {
+            return
+                interaction_channel != nullptr &&
+                request.requestId != 0 &&
+                interaction_channel->cancellation_requested(user, request);
         }
     );
     if(status < PAM_SUCCESS || status > PAM_INCOMPLETE)
@@ -243,13 +250,13 @@ PamUserInteraction::PamUserInteraction(
     std::string process_name,
     std::string configuration_directory,
     UserContextProvider* context_provider,
-    UserInteractionStateSink* state_sink,
+    UserInteractionChannel* interaction_channel,
     bool allow_local_context
 ) :
     processName_(std::move(process_name)),
     configurationDirectory_(std::move(configuration_directory)),
     contextProvider_(context_provider),
-    stateSink_(state_sink),
+    interactionChannel_(interaction_channel),
     allowLocalContext_(allow_local_context)
 {}
 
@@ -277,22 +284,47 @@ UserInteractionResult PamUserInteraction::request_presence(
     std::stop_token stop,
     KeepaliveState& keepalive
 ) {
-    InteractionScope interaction(stateSink_, user, request);
+    InteractionScope interaction(interactionChannel_, user, request);
     const auto& active_request = interaction.request();
     publish_state(
-        stateSink_,
+        interactionChannel_,
         user,
         active_request,
         UserInteractionState::presence_required
     );
     try {
-        const bool approved = collect_consent(
-            presence_question(active_request.operation),
-            stop,
-            keepalive
-        ) && context_is_still_current(contextProvider_, user);
+        UserInteractionResult response;
+        if(
+            interactionChannel_ != nullptr &&
+            active_request.requestId != 0
+        ) {
+            UserActionKeepaliveGuard waiting_for_user(keepalive);
+            response = interactionChannel_->wait_for_presence(
+                user,
+                active_request,
+                stop,
+                USER_ACTION_TIMEOUT
+            );
+        } else {
+            response = collect_consent(
+                presence_question(active_request.operation),
+                stop,
+                keepalive
+            ) ? UserInteractionResult::approved
+              : UserInteractionResult::denied;
+        }
+        if(response == UserInteractionResult::cancelled) {
+            publish_state(
+                interactionChannel_, user, active_request,
+                UserInteractionState::cancelled
+            );
+            return UserInteractionResult::cancelled;
+        }
+        const bool approved =
+            response == UserInteractionResult::approved &&
+            context_is_still_current(contextProvider_, user);
         publish_state(
-            stateSink_,
+            interactionChannel_,
             user,
             active_request,
             approved
@@ -302,14 +334,22 @@ UserInteractionResult PamUserInteraction::request_presence(
         return approved
             ? UserInteractionResult::approved
             : UserInteractionResult::denied;
+    } catch(const UserInteractionCancelled&) {
+        publish_state(
+            interactionChannel_, user, active_request,
+            UserInteractionState::cancelled
+        );
+        return UserInteractionResult::cancelled;
     } catch(const OperationCancelled&) {
         publish_state(
-            stateSink_, user, active_request, UserInteractionState::cancelled
+            interactionChannel_, user, active_request,
+            UserInteractionState::cancelled
         );
         throw;
     } catch(const UserActionTimedOut&) {
         publish_state(
-            stateSink_, user, active_request, UserInteractionState::timed_out
+            interactionChannel_, user, active_request,
+            UserInteractionState::timed_out
         );
         throw;
     }
@@ -321,10 +361,10 @@ UserInteractionResult PamUserInteraction::request_verification(
     std::stop_token stop,
     KeepaliveState& keepalive
 ) {
-    InteractionScope interaction(stateSink_, user, request);
+    InteractionScope interaction(interactionChannel_, user, request);
     const auto& active_request = interaction.request();
     publish_state(
-        stateSink_,
+        interactionChannel_,
         user,
         active_request,
         UserInteractionState::verification_started
@@ -336,12 +376,12 @@ UserInteractionResult PamUserInteraction::request_verification(
             configurationDirectory_,
             stop,
             keepalive,
-            stateSink_,
+            interactionChannel_,
             user,
             active_request
         ) == PAM_SUCCESS && context_is_still_current(contextProvider_, user);
         publish_state(
-            stateSink_,
+            interactionChannel_,
             user,
             active_request,
             approved
@@ -351,14 +391,22 @@ UserInteractionResult PamUserInteraction::request_verification(
         return approved
             ? UserInteractionResult::approved
             : UserInteractionResult::denied;
+    } catch(const UserInteractionCancelled&) {
+        publish_state(
+            interactionChannel_, user, active_request,
+            UserInteractionState::cancelled
+        );
+        return UserInteractionResult::cancelled;
     } catch(const OperationCancelled&) {
         publish_state(
-            stateSink_, user, active_request, UserInteractionState::cancelled
+            interactionChannel_, user, active_request,
+            UserInteractionState::cancelled
         );
         throw;
     } catch(const UserActionTimedOut&) {
         publish_state(
-            stateSink_, user, active_request, UserInteractionState::timed_out
+            interactionChannel_, user, active_request,
+            UserInteractionState::timed_out
         );
         throw;
     }

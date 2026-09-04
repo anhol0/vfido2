@@ -10,7 +10,7 @@ namespace vauth::dbus {
 
 class AgentService final :
     public UserContextProvider,
-    public UserInteractionStateSink {
+    public UserInteractionChannel {
 public:
     AgentService();
     ~AgentService() override;
@@ -32,6 +32,16 @@ public:
         const UserContext& user,
         const UserInteractionRequest& request
     ) noexcept override;
+    [[nodiscard]] UserInteractionResult wait_for_presence(
+        const UserContext& user,
+        const UserInteractionRequest& request,
+        std::stop_token stop,
+        std::chrono::steady_clock::duration timeout
+    ) override;
+    [[nodiscard]] bool cancellation_requested(
+        const UserContext& user,
+        const UserInteractionRequest& request
+    ) const noexcept override;
 
 private:
     class Impl;

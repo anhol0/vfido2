@@ -2,6 +2,7 @@
 
 #include "user_context.hpp"
 
+#include <chrono>
 #include <cstdint>
 #include <optional>
 #include <stop_token>
@@ -23,7 +24,8 @@ struct UserInteractionRequest {
 
 enum class UserInteractionResult {
     approved,
-    denied
+    denied,
+    cancelled
 };
 
 enum class UserInteractionState {
@@ -90,9 +92,9 @@ public:
     [[nodiscard]] virtual std::optional<UserContext> current_context() = 0;
 };
 
-class UserInteractionStateSink {
+class UserInteractionChannel {
 public:
-    virtual ~UserInteractionStateSink() = default;
+    virtual ~UserInteractionChannel() = default;
     [[nodiscard]] virtual uint64_t begin_interaction(
         const UserContext& user,
         const UserInteractionRequest& request
@@ -106,6 +108,16 @@ public:
         const UserContext& user,
         const UserInteractionRequest& request
     ) noexcept = 0;
+    [[nodiscard]] virtual UserInteractionResult wait_for_presence(
+        const UserContext& user,
+        const UserInteractionRequest& request,
+        std::stop_token stop,
+        std::chrono::steady_clock::duration timeout
+    ) = 0;
+    [[nodiscard]] virtual bool cancellation_requested(
+        const UserContext& user,
+        const UserInteractionRequest& request
+    ) const noexcept = 0;
 };
 
 class UserInteraction {

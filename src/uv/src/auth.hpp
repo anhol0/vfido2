@@ -11,7 +11,7 @@ public:
         std::string process_name,
         std::string configuration_directory,
         UserContextProvider* context_provider = nullptr,
-        UserInteractionStateSink* state_sink = nullptr,
+        UserInteractionChannel* interaction_channel = nullptr,
         bool allow_local_context = true
     );
 
@@ -35,6 +35,6 @@ private:
     std::string processName_;
     std::string configurationDirectory_;
     UserContextProvider* contextProvider_;
-    UserInteractionStateSink* stateSink_;
+    UserInteractionChannel* interactionChannel_;
     bool allowLocalContext_;
 };

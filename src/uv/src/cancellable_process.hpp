@@ -16,7 +16,8 @@ int run_cancellable_program(
     const std::vector<std::string>& arguments,
     std::stop_token stop,
     std::chrono::steady_clock::duration timeout,
-    const std::function<void(uint8_t)>& status_callback = {}
+    const std::function<void(uint8_t)>& status_callback = {},
+    const std::function<bool()>& cancellation_requested = {}
 );
 
 }

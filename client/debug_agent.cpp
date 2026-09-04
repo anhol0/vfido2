@@ -42,6 +42,33 @@ std::string display_message(
     return "State " + state + " during " + operation + target;
 }
 
+void respond_to_presence(
+    sdbus::IProxy& proxy,
+    uint64_t generation,
+    uint64_t request_id
+) {
+    std::cout << "Allow this operation? [y/N/cancel] " << std::flush;
+    std::string response;
+    if(!std::getline(std::cin, response))
+        response.clear();
+
+    if(response == "c" || response == "cancel") {
+        proxy.callMethod(
+            std::string(vauth::dbus::CANCEL_INTERACTION_METHOD)
+        ).onInterface(
+            std::string(vauth::dbus::INTERFACE_NAME)
+        ).withArguments(generation, request_id);
+        return;
+    }
+
+    const bool approved = response == "y" || response == "yes";
+    proxy.callMethod(
+        std::string(vauth::dbus::RESPOND_TO_PRESENCE_METHOD)
+    ).onInterface(
+        std::string(vauth::dbus::INTERFACE_NAME)
+    ).withArguments(generation, request_id, approved);
+}
+
 }
 
 int main() {
@@ -59,7 +86,7 @@ int main() {
         ).onInterface(
             std::string(vauth::dbus::INTERFACE_NAME)
         ).call(
-            [&generation](
+            [&generation, proxy = proxy.get()](
                 uint64_t signal_generation,
                 uint64_t request_id,
                 const std::string& state,
@@ -76,6 +103,18 @@ int main() {
                               operation,
                               relying_party_id
                           ) << '\n';
+                if(state == "presence_required") {
+                    try {
+                        respond_to_presence(
+                            *proxy,
+                            generation,
+                            request_id
+                        );
+                    } catch(const std::exception& error) {
+                        std::cerr << "Presence response failed: "
+                                  << error.what() << '\n';
+                    }
+                }
             },
             sdbus::return_slot
         );

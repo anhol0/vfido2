@@ -1,5 +1,6 @@
 #include "interaction_registry.hpp"
 
+#include <chrono>
 #include <limits>
 #include <stdexcept>
 
@@ -107,12 +108,15 @@ uint64_t InteractionRegistry::begin(
         .user = user.binding(),
         .operation = operation,
         .relyingPartyId = std::string(relying_party_id),
-        .state = std::nullopt
+        .state = std::nullopt,
+        .presenceResponse = std::nullopt,
+        .cancelRequested = false,
+        .responseClosed = false
     };
     return request_id;
 }
 
-void InteractionRegistry::transition(
+bool InteractionRegistry::transition(
     const UserContext& user,
     uint64_t request_id,
     UserInteractionState state
@@ -128,10 +132,119 @@ void InteractionRegistry::transition(
     }
     if(!valid_transition(current_->state, state))
         throw std::logic_error("Invalid interaction state transition");
+    if(
+        current_->cancelRequested &&
+        state != UserInteractionState::cancelled
+    ) {
+        return false;
+    }
 
     current_->state = state;
-    if(is_terminal(state))
+    if(is_terminal(state)) {
         current_.reset();
+        condition_.notify_all();
+    }
+    return true;
+}
+
+void InteractionRegistry::respond_to_presence(
+    const UserContext& user,
+    uint64_t request_id,
+    bool approved
+) {
+    std::lock_guard lock(mutex_);
+    if(
+        request_id == 0 ||
+        !current_ ||
+        current_->requestId != request_id ||
+        !same_user(current_->user, user) ||
+        current_->state != UserInteractionState::presence_required ||
+        current_->responseClosed
+    ) {
+        throw std::runtime_error("Presence response is not currently accepted");
+    }
+    current_->presenceResponse = approved;
+    current_->responseClosed = true;
+    condition_.notify_all();
+}
+
+void InteractionRegistry::request_cancel(
+    const UserContext& user,
+    uint64_t request_id
+) {
+    std::lock_guard lock(mutex_);
+    if(
+        request_id == 0 ||
+        !current_ ||
+        current_->requestId != request_id ||
+        !same_user(current_->user, user) ||
+        !current_->state ||
+        current_->responseClosed
+    ) {
+        throw std::runtime_error("Interaction cancellation is not accepted");
+    }
+    current_->cancelRequested = true;
+    current_->responseClosed = true;
+    condition_.notify_all();
+}
+
+PresenceWaitResult InteractionRegistry::wait_for_presence(
+    const UserContext& user,
+    uint64_t request_id,
+    std::stop_token stop,
+    std::chrono::steady_clock::duration timeout
+) {
+    if(timeout <= std::chrono::steady_clock::duration::zero())
+        throw std::invalid_argument("Presence timeout must be positive");
+
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    std::unique_lock lock(mutex_);
+    std::stop_callback wake_on_stop(stop, [this] {
+        condition_.notify_all();
+    });
+
+    while(true) {
+        if(
+            !current_ ||
+            current_->requestId != request_id ||
+            !same_user(current_->user, user)
+        ) {
+            return PresenceWaitResult::invalidated;
+        }
+        if(stop.stop_requested()) {
+            current_->responseClosed = true;
+            return PresenceWaitResult::platform_cancelled;
+        }
+        if(current_->cancelRequested)
+            return PresenceWaitResult::client_cancelled;
+        if(current_->presenceResponse) {
+            return *current_->presenceResponse
+                ? PresenceWaitResult::approved
+                : PresenceWaitResult::denied;
+        }
+        if(std::chrono::steady_clock::now() >= deadline) {
+            current_->responseClosed = true;
+            return PresenceWaitResult::timed_out;
+        }
+        condition_.wait_until(lock, deadline);
+    }
+}
+
+bool InteractionRegistry::cancellation_requested(
+    const UserContext& user,
+    uint64_t request_id
+) const noexcept {
+    try {
+        std::lock_guard lock(mutex_);
+        return
+            request_id == 0 ||
+            !current_ ||
+            current_->requestId != request_id ||
+            !same_user(current_->user, user) ||
+            current_->cancelRequested;
+    } catch(...) {
+        return true;
+    }
 }
 
 bool InteractionRegistry::end(
@@ -149,6 +262,7 @@ bool InteractionRegistry::end(
             return false;
         }
         current_.reset();
+        condition_.notify_all();
         return true;
     } catch(...) {
         return false;
@@ -160,8 +274,10 @@ void InteractionRegistry::clear_for(
 ) noexcept {
     try {
         std::lock_guard lock(mutex_);
-        if(current_ && same_user(current_->user, user))
+        if(current_ && same_user(current_->user, user)) {
             current_.reset();
+            condition_.notify_all();
+        }
     } catch(...) {
     }
 }

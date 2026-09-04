@@ -270,9 +270,12 @@ int run_cancellable_program(
     const std::vector<std::string>& arguments,
     std::stop_token stop,
     std::chrono::steady_clock::duration timeout,
-    const std::function<void(uint8_t)>& status_callback
+    const std::function<void(uint8_t)>& status_callback,
+    const std::function<bool()>& cancellation_requested
 ) {
     cancellation_point(stop);
+    if(cancellation_requested && cancellation_requested())
+        throw UserInteractionCancelled{};
     if(path.empty())
         throw std::invalid_argument("child program path is empty");
     if(timeout <= std::chrono::steady_clock::duration::zero())
@@ -331,6 +334,10 @@ int run_cancellable_program(
         if(stop.stop_requested()) {
             child.terminate_and_reap();
             throw OperationCancelled{};
+        }
+        if(cancellation_requested && cancellation_requested()) {
+            child.terminate_and_reap();
+            throw UserInteractionCancelled{};
         }
         if(const auto status = child.poll()) {
             if(status_pipe)
