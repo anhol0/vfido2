@@ -16,7 +16,8 @@ production credentials.
 ## Build and test
 
 The build requires CMake, a C++20 compiler, pkg-config, TinyCBOR, OpenSSL,
-TPM2-TSS ESAPI/FAPI/RC/MU, PAM, sdbus-c++, and libsystemd development files.
+TPM2-TSS ESAPI/FAPI/RC/MU, PAM, sdbus-c++, libsystemd, Slint, and rlottie
+development files.
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
@@ -24,8 +25,16 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-The resulting executable is `build/vauth`. The software-TPM integration test is
-enabled when `swtpm` and the TPM2/FAPI command-line tools are installed.
+The resulting executables are `build/vauth` and `build/vauth-ui`. The
+software-TPM integration test is enabled when `swtpm` and the TPM2/FAPI
+command-line tools are installed.
+
+The unprivileged UI can also be built independently:
+
+```sh
+cmake -S client -B client/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+cmake --build client/build --parallel
+```
 
 Before running the daemon as the `vauth` service user, install the system-bus
 policy and reload the bus configuration:
@@ -37,13 +46,16 @@ sudo busctl call org.freedesktop.DBus /org/freedesktop/DBus \
   org.freedesktop.DBus ReloadConfig
 ```
 
-Debug builds also produce `build/vauth-agent-debug`. Run it as the desktop user
-before starting a WebAuthn ceremony. Without an active registered agent, vAuth
-rejects operations that require user presence or verification; it never falls
-back to daemon stdin or a local dialog. The agent answers presence and password
-prompts and prints the targeted interaction-state signals that a future Slint UI
-will consume. Passwords are submitted through a bounded one-shot Unix pipe
-rather than as D-Bus string values.
+Run `./build/vauth-ui` as the desktop user before starting a WebAuthn ceremony.
+It registers once with the daemon, remains resident, and opens its Slint window
+only when presence or verification is required. Without an active registered
+agent, vAuth rejects operations that require user interaction; it never falls
+back to daemon stdin or a local dialog. Passwords are submitted through a
+bounded one-shot Unix pipe rather than as D-Bus string values.
+
+Debug builds also produce `build/vauth-agent-debug`, which provides the same
+D-Bus responses through a console interface for diagnostics. Run only one UI
+agent at a time.
 
 ## Provision database security objects
 
