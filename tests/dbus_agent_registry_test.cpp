@@ -175,6 +175,31 @@ bool test_invalid_identity_rejected() {
     return true;
 }
 
+bool test_wait_for_registration() {
+    vauth::dbus::AgentRegistry registry;
+    std::jthread registrar([&] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        static_cast<void>(registry.register_agent(peer()));
+    });
+
+    const auto context = registry.wait_for_current(
+        std::chrono::seconds(1)
+    );
+    registrar.join();
+    CHECK(context.has_value());
+    CHECK(context->session.has_value());
+    CHECK(context->session->interactionAgentId == ":1.42");
+
+    vauth::dbus::AgentRegistry empty;
+    const auto started = std::chrono::steady_clock::now();
+    CHECK(!empty.wait_for_current(std::chrono::milliseconds(20)));
+    CHECK(
+        std::chrono::steady_clock::now() - started >=
+        std::chrono::milliseconds(15)
+    );
+    return true;
+}
+
 bool test_state_names() {
     CHECK(
         user_interaction_operation_name(
@@ -632,6 +657,7 @@ int main() {
     test_support::Runner runner;
     runner.run("test_registration_lifetime", test_registration_lifetime);
     runner.run("test_invalid_identity_rejected", test_invalid_identity_rejected);
+    runner.run("test_wait_for_registration", test_wait_for_registration);
     runner.run("test_state_names", test_state_names);
     runner.run("test_interaction_lifecycle", test_interaction_lifecycle);
     runner.run(
