@@ -9,11 +9,14 @@
 
 #include <algorithm>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
+#include <deque>
 #include <functional>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <ranges>
 #include <stdexcept>
 #include <string>
@@ -27,6 +30,7 @@ namespace {
 constexpr float ANIMATION_LOGICAL_WIDTH = 145.0F;
 constexpr float ANIMATION_LOGICAL_HEIGHT = 145.0F;
 constexpr std::size_t MAX_PASSWORD_SIZE = 1024;
+constexpr std::size_t MAX_STARTUP_EVENTS = 32;
 
 struct FingerprintAnimations {
     std::unique_ptr<rlottie::Animation> waiting;
@@ -53,6 +57,14 @@ struct UiRuntime {
     std::function<void()> renderTick;
     uint64_t activeRequestId = 0;
     uint64_t presentationRevision = 0;
+};
+
+struct UiStartup {
+    std::mutex mutex;
+    std::condition_variable eventAvailable;
+    std::deque<vauth::client::InteractionEvent> events;
+    bool eventLoopStarted = false;
+    bool overflowed = false;
 };
 
 std::unique_ptr<rlottie::Animation> load_animation(std::string_view data) {
@@ -125,6 +137,11 @@ void show_event(
     const std::shared_ptr<UiRuntime>& runtime,
     vauth::client::InteractionEvent event
 ) {
+    if(!runtime->ui->window().is_visible()) {
+        runtime->ui->set_remap_constraint_toggle(
+            !runtime->ui->get_remap_constraint_toggle()
+        );
+    }
     const auto presentation = runtime->model.apply(event);
     const uint64_t revision = ++runtime->presentationRevision;
     runtime->activeRequestId = presentation.terminal ? 0 : event.requestId;
@@ -159,9 +176,13 @@ void show_event(
 
     runtime->terminalTimer.stop();
     if(presentation.terminal) {
+        const auto display_time =
+            presentation.animation == vauth::client::AnimationKind::none
+                ? std::chrono::milliseconds(1800)
+                : std::chrono::milliseconds(2200);
         runtime->terminalTimer.start(
             slint::TimerMode::SingleShot,
-            std::chrono::milliseconds(1800),
+            display_time,
             [runtime_pointer = runtime.get(), revision] {
                 if(runtime_pointer->presentationRevision == revision) {
                     runtime_pointer->renderTimer.stop();
@@ -233,9 +254,22 @@ int main() {
             throw std::runtime_error("Unable to load fingerprint animations");
 
         auto runtime = std::make_shared<UiRuntime>(AppWindow::create());
+        auto startup = std::make_shared<UiStartup>();
 
         auto agent = std::make_unique<vauth::client::AgentClient>(
-            [runtime](vauth::client::InteractionEvent event) {
+            [runtime, startup](vauth::client::InteractionEvent event) {
+                {
+                    std::lock_guard lock(startup->mutex);
+                    if(!startup->eventLoopStarted) {
+                        if(startup->events.size() == MAX_STARTUP_EVENTS) {
+                            startup->overflowed = true;
+                        } else {
+                            startup->events.push_back(std::move(event));
+                        }
+                        startup->eventAvailable.notify_one();
+                        return;
+                    }
+                }
                 slint::invoke_from_event_loop(
                     [runtime, event = std::move(event)]() mutable {
                         show_event(runtime, std::move(event));
@@ -382,7 +416,29 @@ int main() {
         };
 
         std::cout << "Registered vAuth UI agent generation "
-                  << agent->generation() << '\n';
+                  << agent->generation() << std::endl;
+
+        // On Wayland, the Slint winit backend must map this component before
+        // entering its event loop. Wait without holding up the D-Bus thread,
+        // apply the first directed interaction on the UI thread, and let
+        // show_event() create the initial window before the loop starts.
+        std::deque<vauth::client::InteractionEvent> startup_events;
+        {
+            std::unique_lock lock(startup->mutex);
+            startup->eventAvailable.wait(lock, [startup] {
+                return startup->overflowed || !startup->events.empty();
+            });
+            if(startup->overflowed) {
+                throw std::runtime_error(
+                    "Too many UI events arrived during startup"
+                );
+            }
+            startup->eventLoopStarted = true;
+            startup_events.swap(startup->events);
+        }
+        for(auto& event : startup_events)
+            show_event(runtime, std::move(event));
+
         slint::run_event_loop(slint::EventLoopMode::RunUntilQuit);
         agent.reset();
         return EXIT_SUCCESS;

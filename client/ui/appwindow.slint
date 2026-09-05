@@ -37,8 +37,11 @@ component ActionButton inherits Rectangle {
 export component AppWindow inherits Window {
     no-frame: true;
     // always-on-top: true;
-    width: 350px;
-    height: 350px;
+    // Changing this before remapping invalidates Slint's cached constraints.
+    // Its Wayland backend otherwise recreates a hidden window as resizable.
+    in-out property <bool> remap-constraint-toggle: false;
+    width: remap-constraint-toggle ? 349.999px : 350px;
+    height: remap-constraint-toggle ? 349.999px : 350px;
     background: transparent;
     // title: "vAuth";
 

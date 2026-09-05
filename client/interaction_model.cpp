@@ -140,9 +140,16 @@ UiPresentation UiModel::apply(const InteractionEvent& event) {
             result.message = "The passkey operation can continue.";
             break;
         case InteractionState::verification_failed:
-            result.view = ViewKind::status;
+            result.view = currentView_ == ViewKind::password
+                ? ViewKind::fingerprint
+                : ViewKind::status;
+            result.animation = currentView_ == ViewKind::password
+                ? AnimationKind::failure
+                : AnimationKind::none;
             result.title = "Verification failed";
-            result.message = "Your identity could not be verified.";
+            result.message = currentView_ == ViewKind::password
+                ? "The fallback verification method was unsuccessful."
+                : "Your identity could not be verified.";
             break;
         case InteractionState::cancelled:
             result.view = ViewKind::status;

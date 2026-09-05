@@ -110,6 +110,29 @@ bool test_ui_model_maps_terminal_states() {
     return true;
 }
 
+bool test_password_fallback_failure_uses_failure_animation() {
+    using vauth::client::AnimationKind;
+    using vauth::client::InteractionState;
+    using vauth::client::ViewKind;
+    vauth::client::UiModel model;
+
+    static_cast<void>(model.apply(
+        event(InteractionState::verification_started)
+    ));
+    static_cast<void>(model.apply(
+        event(InteractionState::password_required)
+    ));
+    const auto failure = model.apply(
+        event(InteractionState::verification_failed)
+    );
+
+    CHECK(failure.view == ViewKind::fingerprint);
+    CHECK(failure.animation == AnimationKind::failure);
+    CHECK(failure.title == "Verification failed");
+    CHECK(failure.terminal);
+    return true;
+}
+
 } // namespace
 
 int main() {
@@ -130,6 +153,10 @@ int main() {
     runner.run(
         "UI model maps terminal states",
         test_ui_model_maps_terminal_states
+    );
+    runner.run(
+        "password fallback failure uses failure animation",
+        test_password_fallback_failure_uses_failure_animation
     );
     return runner.finish();
 }
