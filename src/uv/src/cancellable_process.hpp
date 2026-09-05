@@ -7,9 +7,14 @@
 #include <functional>
 #include <stop_token>
 #include <string>
+#include <sys/types.h>
 #include <vector>
 
 namespace vauth::uv {
+
+// Arrange for this process to receive the PAM cancellation signal if the
+// expected parent exits. The identity check closes the fork/exec-to-prctl race.
+void arm_parent_death_signal(pid_t expected_parent);
 
 // Runs a program in its own process group. Cancellation or timeout terminates
 // and reaps the whole group before the corresponding exception is thrown.

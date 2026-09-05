@@ -1,0 +1,210 @@
+import { LineEdit, HorizontalBox, Palette } from "std-widgets.slint";
+
+component ActionButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> primary: false;
+    callback clicked();
+
+    height: 40px;
+    border-radius: self.height / 2;
+    border-width: 1px;
+    border-color: primary ? #68a9ff : #626262;
+    background: touch.pressed
+        ? (primary ? #1f6fce : #292929)
+        : touch.has-hover
+            ? (primary ? #4898ff : #484848)
+            : (primary ? #3188f4 : #393939);
+
+    Text {
+        width: 100%;
+        height: 100%;
+        text: root.text;
+        color: white;
+        font-size: 14px;
+        font-weight: 500;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    touch := TouchArea {
+        width: 100%;
+        height: 100%;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component AppWindow inherits Window {
+    no-frame: true;
+    // always-on-top: true;
+    width: 350px;
+    height: 350px;
+    background: transparent;
+    // title: "vAuth";
+
+    in-out property <string> view: "status";
+    in-out property <string> heading: "vAuth";
+    in-out property <string> message: "Waiting for an authentication request.";
+    in-out property <string> relying-party-id: "";
+    in-out property <string> password-text: "";
+    in-out property <bool> interaction-active: false;
+    in-out property <image> lottie-frame;
+    in-out property <string> animation-kind: "waiting";
+    in-out property <int> animation-revision: 0;
+
+    callback approve-presence();
+    callback deny-presence();
+    callback cancel-interaction();
+    callback submit-password(string);
+
+    init => {
+        Palette.color-scheme = ColorScheme.dark;
+    }
+
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #2b2b2b;
+        border-radius: 16px;
+
+        VerticalLayout {
+            alignment: center;
+            spacing: 10px;
+            padding: 20px;
+
+            Text {
+                text: root.heading;
+                font-size: 20px;
+                font-weight: 600;
+                horizontal-alignment: center;
+                color: white;
+            }
+
+            if root.relying-party-id != "": Text {
+                text: root.relying-party-id;
+                font-size: 14px;
+                horizontal-alignment: center;
+                color: #9fc8ff;
+                overflow: elide;
+            }
+
+            if root.view == "fingerprint": HorizontalBox {
+                alignment: center;
+                height: 145px;
+
+                Image {
+                    width: 145px;
+                    height: 145px;
+                    source: root.lottie-frame;
+                    image-fit: contain;
+                }
+            }
+
+            if root.view != "fingerprint": Rectangle {
+                height: 72px;
+                background: transparent;
+
+                Text {
+                    width: 100%;
+                    height: 100%;
+                    text: root.message;
+                    font-size: 15px;
+                    wrap: word-wrap;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    color: #dedede;
+                }
+            }
+
+            if root.view == "fingerprint": Text {
+                text: root.message;
+                font-size: 15px;
+                wrap: word-wrap;
+                horizontal-alignment: center;
+                color: white;
+            }
+
+            if root.view == "password": HorizontalLayout {
+                height: 52px;
+                alignment: center;
+
+                Rectangle {
+                    width: 260px;
+                    height: 52px;
+                    background: transparent;
+
+                    password-input := LineEdit {
+                        width: 100%;
+                        height: 100%;
+                        input-type: password;
+                        text <=> root.password-text;
+                        accessible-label: "Password";
+                        accepted => {
+                            root.submit-password(root.password-text);
+                            root.password-text = "";
+                        }
+                    }
+
+                    if password-input.text == "": Text {
+                        x: 16px;
+                        width: parent.width - 56px;
+                        height: 100%;
+                        text: "Password";
+                        color: #c7c7c7;
+                        font-size: 16px;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            if root.view == "presence" && root.interaction-active: HorizontalLayout {
+                alignment: center;
+                spacing: 12px;
+
+                ActionButton {
+                    text: "Deny";
+                    width: 100px;
+                    clicked => { root.deny-presence(); }
+                }
+
+                ActionButton {
+                    text: "Allow";
+                    primary: true;
+                    width: 100px;
+                    clicked => { root.approve-presence(); }
+                }
+            }
+
+            if root.view == "fingerprint" && root.interaction-active: HorizontalLayout {
+                alignment: center;
+
+                ActionButton {
+                    text: "Cancel";
+                    width: 100px;
+                    clicked => { root.cancel-interaction(); }
+                }
+            }
+
+            if root.view == "password" && root.interaction-active: HorizontalLayout {
+                alignment: center;
+                spacing: 12px;
+
+                ActionButton {
+                    text: "Cancel";
+                    width: 100px;
+                    clicked => { root.cancel-interaction(); }
+                }
+
+                ActionButton {
+                    text: "Continue";
+                    primary: true;
+                    width: 100px;
+                    clicked => {
+                        root.submit-password(root.password-text);
+                        root.password-text = "";
+                    }
+                }
+            }
+        }
+    }
+}

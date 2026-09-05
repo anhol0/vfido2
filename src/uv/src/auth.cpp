@@ -9,6 +9,7 @@
 #include <chrono>
 #include <security/_pam_types.h>
 #include <string>
+#include <unistd.h>
 #include <utility>
 
 namespace {
@@ -97,7 +98,8 @@ int authenticate_user(
             std::string(VAUTH_AUTH_HANDLER_COMMAND),
             username,
             process_name,
-            confdir
+            confdir,
+            std::to_string(getpid())
         },
         stop,
         USER_ACTION_TIMEOUT,

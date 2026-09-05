@@ -1,3 +1,4 @@
+#include <array>
 #include <cerrno>
 #include <cstdint>
 #include <chrono>
@@ -11,6 +12,7 @@
 #include <stdexcept>
 #include <stop_token>
 #include <sys/poll.h>
+#include <sys/signalfd.h>
 #include <system_error>
 #include <thread>
 #include <unordered_set>
@@ -169,7 +171,8 @@ void run(
     FIDODevice& device,
     CredentialStore& store,
     CredentialKeyProvider& key_provider,
-    UserInteraction& user_interaction
+    UserInteraction& user_interaction,
+    int shutdown_fd
 ) {
 #ifdef DEBUG
     // Showing
@@ -189,15 +192,28 @@ void run(
     uint64_t next_generation = 1;
     std::jthread worker;
 
-    pollfd device_poll{
-        .fd = device.native_handle(),
-        .events = POLLIN,
-        .revents = 0
-    };
+    if(shutdown_fd < 0)
+        throw std::invalid_argument("Invalid shutdown signal descriptor");
+
+    std::array<pollfd, 2> poll_descriptors{{
+        {
+            .fd = device.native_handle(),
+            .events = POLLIN,
+            .revents = 0
+        },
+        {
+            .fd = shutdown_fd,
+            .events = POLLIN,
+            .revents = 0
+        }
+    }};
+    auto& device_poll = poll_descriptors[0];
+    auto& shutdown_poll = poll_descriptors[1];
 
     CTAPHIDFrameProcessor frame_processor;
     while (true) {
         device_poll.revents = 0;
+        shutdown_poll.revents = 0;
 
         // Timeout calculation
         int timeout = -1;
@@ -215,11 +231,37 @@ void run(
         int poll_result;
 
         do {
-            poll_result = poll(&device_poll, 1, timeout);
+            poll_result = poll(
+                poll_descriptors.data(),
+                poll_descriptors.size(),
+                timeout
+            );
         } while (poll_result < 0 && errno == EINTR);
 
         if (poll_result < 0) {
             throw  std::system_error(errno, std::generic_category(), "Failed to poll UHID device");
+        }
+
+        if(shutdown_poll.revents & (POLLERR | POLLHUP | POLLNVAL))
+            throw std::runtime_error("Shutdown signal polling failed");
+        if(shutdown_poll.revents & POLLIN) {
+            signalfd_siginfo signal_info{};
+            ssize_t count;
+            do {
+                count = read(
+                    shutdown_fd,
+                    &signal_info,
+                    sizeof(signal_info)
+                );
+            } while(count < 0 && errno == EINTR);
+            if(count != static_cast<ssize_t>(sizeof(signal_info))) {
+                throw std::runtime_error("Failed to read shutdown signal");
+            }
+            if(worker.joinable()) {
+                worker.request_stop();
+                worker.join();
+            }
+            return;
         }
 
         if(device_poll.revents & (POLLERR | POLLHUP | POLLNVAL)) {

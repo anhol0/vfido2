@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <iostream>
 #include <optional>
+#include <signal.h>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -12,6 +13,7 @@
 #include <utility>
 
 #include <openssl/crypto.h>
+#include <sys/signalfd.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -47,6 +49,72 @@ public:
 
 private:
     int fd_;
+};
+
+class ShutdownSignal {
+public:
+    ShutdownSignal() {
+        sigset_t signals;
+        if(
+            sigemptyset(&signals) != 0 ||
+            sigaddset(&signals, SIGINT) != 0 ||
+            sigaddset(&signals, SIGTERM) != 0
+        ) {
+            throw std::system_error(
+                errno,
+                std::generic_category(),
+                "prepare shutdown signals"
+            );
+        }
+        if(sigprocmask(SIG_BLOCK, &signals, &previousMask_) != 0) {
+            throw std::system_error(
+                errno,
+                std::generic_category(),
+                "block shutdown signals"
+            );
+        }
+        maskInstalled_ = true;
+
+        fd_ = signalfd(-1, &signals, SFD_CLOEXEC | SFD_NONBLOCK);
+        if(fd_ < 0) {
+            const int saved_errno = errno;
+            static_cast<void>(sigprocmask(
+                SIG_SETMASK,
+                &previousMask_,
+                nullptr
+            ));
+            maskInstalled_ = false;
+            throw std::system_error(
+                saved_errno,
+                std::generic_category(),
+                "create shutdown signal descriptor"
+            );
+        }
+    }
+
+    ~ShutdownSignal() {
+        if(fd_ >= 0)
+            static_cast<void>(close(fd_));
+        if(maskInstalled_) {
+            static_cast<void>(sigprocmask(
+                SIG_SETMASK,
+                &previousMask_,
+                nullptr
+            ));
+        }
+    }
+
+    ShutdownSignal(const ShutdownSignal&) = delete;
+    ShutdownSignal& operator=(const ShutdownSignal&) = delete;
+
+    [[nodiscard]] int native_handle() const noexcept {
+        return fd_;
+    }
+
+private:
+    sigset_t previousMask_{};
+    int fd_ = -1;
+    bool maskInstalled_ = false;
 };
 
 struct Authorization {
@@ -251,6 +319,10 @@ int main(int argc, char** argv) {
 
     try {
         const Options options = parse_options(argc, argv);
+        std::optional<ShutdownSignal> shutdown_signal;
+        if(options.command == "run")
+            shutdown_signal.emplace();
+
         Authorization authorization;
         read_authorization(authorization_path(options), authorization);
         FapiStoreSecurity security(authorization.view());
@@ -307,7 +379,13 @@ int main(int argc, char** argv) {
             agent_service
         );
 #endif
-        run(device, store, key_provider, user_interaction);
+        run(
+            device,
+            store,
+            key_provider,
+            user_interaction,
+            shutdown_signal->native_handle()
+        );
         return 0;
     } catch(const std::exception& error) {
         std::cerr << "vauth: " << error.what() << '\n';

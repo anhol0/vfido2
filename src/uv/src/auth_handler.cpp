@@ -1,5 +1,6 @@
 #include "auth_handler.hpp"
 #include "auth_handler_status.hpp"
+#include "cancellable_process.hpp"
 #include "sensitive_bytes.hpp"
 
 #include <security/_pam_types.h>
@@ -7,6 +8,7 @@
 
 #include <array>
 #include <algorithm>
+#include <charconv>
 #include <cerrno>
 #include <cctype>
 #include <cstdlib>
@@ -281,10 +283,24 @@ int authenticate(
 }
 
 int run_vauth_auth_handler(int argc, char** argv) noexcept {
-    if(argc != 3 || argv == nullptr)
+    if(argc != 4 || argv == nullptr)
         return PAM_SYSTEM_ERR;
 
     try {
+        pid_t expected_parent = 0;
+        const std::string_view parent_text(argv[3]);
+        const auto [end, error] = std::from_chars(
+            parent_text.data(),
+            parent_text.data() + parent_text.size(),
+            expected_parent
+        );
+        if(
+            error != std::errc{} ||
+            end != parent_text.data() + parent_text.size()
+        ) {
+            return PAM_SYSTEM_ERR;
+        }
+        vauth::uv::arm_parent_death_signal(expected_parent);
         return authenticate(argv[0], argv[1], argv[2]);
     } catch(...) {
         return PAM_SYSTEM_ERR;

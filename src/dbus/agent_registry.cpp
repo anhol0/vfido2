@@ -31,7 +31,7 @@ void validate_peer(const AgentPeer& peer) {
 
 UserContext AgentRegistry::register_agent(AgentPeer peer) {
     validate_peer(peer);
-    std::lock_guard lock(mutex_);
+    std::unique_lock lock(mutex_);
 
     if(current_) {
         if(same_peer(*current_, peer))
@@ -58,7 +58,10 @@ UserContext AgentRegistry::register_agent(AgentPeer peer) {
             .generation = nextGeneration_++
         }
     };
-    return *current_;
+    UserContext result = *current_;
+    lock.unlock();
+    changed_.notify_all();
+    return result;
 }
 
 bool AgentRegistry::unregister_agent(std::string_view bus_name) {
@@ -76,6 +79,16 @@ bool AgentRegistry::unregister_agent(std::string_view bus_name) {
 
 std::optional<UserContext> AgentRegistry::current_context() const {
     std::lock_guard lock(mutex_);
+    return current_;
+}
+
+std::optional<UserContext> AgentRegistry::wait_for_current(
+    std::chrono::steady_clock::duration timeout
+) const {
+    std::unique_lock lock(mutex_);
+    static_cast<void>(changed_.wait_for(lock, timeout, [this] {
+        return current_.has_value();
+    }));
     return current_;
 }
 

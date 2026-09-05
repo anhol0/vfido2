@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <deque>
@@ -37,6 +38,7 @@ namespace vauth::dbus {
 namespace {
 
 constexpr std::size_t MAX_ACCOUNT_BUFFER_SIZE = 1024 * 1024;
+constexpr auto AGENT_STARTUP_GRACE = std::chrono::seconds(2);
 #ifdef DEBUG
 constexpr std::string_view ANSI_PURPLE = "\x1b[35m";
 constexpr std::string_view ANSI_RESET = "\x1b[0m";
@@ -321,7 +323,8 @@ public:
 
     [[nodiscard]] std::optional<UserContext> current_context() {
         throw_if_failed();
-        auto context = registry_.current_context();
+        auto context = registry_.wait_for_current(AGENT_STARTUP_GRACE);
+        throw_if_failed();
         if(!context)
             return std::nullopt;
         if(session_is_still_active(*context))

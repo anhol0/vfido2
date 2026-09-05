@@ -99,12 +99,13 @@ target_link_libraries(${PN} PRIVATE
     vauth_dbus
 )
 
+option(VAUTH_BUILD_UI "Build the Slint vAuth user-interaction agent" ON)
 option(
     VAUTH_BUILD_DEBUG_AGENT
     "Build the temporary console D-Bus user-interaction agent"
     ${BUILD_TESTING}
 )
-if(VAUTH_BUILD_DEBUG_AGENT)
+if(VAUTH_BUILD_UI OR VAUTH_BUILD_DEBUG_AGENT)
     add_subdirectory(client)
 endif()
 

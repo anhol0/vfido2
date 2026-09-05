@@ -10,5 +10,6 @@ void run(
     FIDODevice& device,
     CredentialStore& store,
     CredentialKeyProvider& key_provider,
-    UserInteraction& user_interaction
+    UserInteraction& user_interaction,
+    int shutdown_fd
 );

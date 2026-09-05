@@ -15,6 +15,7 @@
 #include <spawn.h>
 #include <stdexcept>
 #include <system_error>
+#include <sys/prctl.h>
 #include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
@@ -281,34 +282,60 @@ public:
         if(pid_ <= 0)
             return;
 
-        // The child is its own process-group leader. Terminate descendants too,
-        // so a PAM module cannot leave a prompt or helper behind after cancel.
+        // pam_fprintd handles SIGINT and uses its normal return path to stop
+        // verification and release the claimed device. Preserve that cleanup
+        // opportunity before escalating to signals that bypass destructors.
+        static_cast<void>(kill(-pid_, SIGINT));
+        if(wait_for_exit(std::chrono::seconds(2)))
+            return;
+
         static_cast<void>(kill(-pid_, SIGTERM));
+        if(wait_for_exit(std::chrono::milliseconds(500)))
+            return;
 
-        constexpr auto grace_period = std::chrono::milliseconds(100);
-        constexpr auto poll_interval = std::chrono::milliseconds(5);
-        const auto deadline = std::chrono::steady_clock::now() + grace_period;
         int status = 0;
-        while(std::chrono::steady_clock::now() < deadline) {
-            const pid_t result = waitpid(pid_, &status, WNOHANG);
-            if(result == pid_ || (result < 0 && errno == ECHILD)) {
-                pid_ = -1;
-                return;
-            }
-            if(result < 0 && errno != EINTR)
-                break;
-            std::this_thread::sleep_for(poll_interval);
-        }
-
         static_cast<void>(kill(-pid_, SIGKILL));
         while(waitpid(pid_, &status, 0) < 0 && errno == EINTR) {}
         pid_ = -1;
     }
 
 private:
+    bool wait_for_exit(std::chrono::steady_clock::duration grace) noexcept {
+        constexpr auto poll_interval = std::chrono::milliseconds(5);
+        const auto deadline = std::chrono::steady_clock::now() + grace;
+        int status = 0;
+        while(std::chrono::steady_clock::now() < deadline) {
+            const pid_t result = waitpid(pid_, &status, WNOHANG);
+            if(result == pid_ || (result < 0 && errno == ECHILD)) {
+                pid_ = -1;
+                return true;
+            }
+            if(result < 0 && errno != EINTR)
+                return false;
+            std::this_thread::sleep_for(poll_interval);
+        }
+        return false;
+    }
+
     pid_t pid_;
 };
 
+}
+
+void arm_parent_death_signal(pid_t expected_parent) {
+    if(expected_parent <= 1)
+        throw std::invalid_argument("invalid authentication parent process");
+    if(prctl(PR_SET_PDEATHSIG, SIGINT) != 0) {
+        throw std::system_error(
+            errno,
+            std::generic_category(),
+            "prctl PR_SET_PDEATHSIG"
+        );
+    }
+    if(getppid() != expected_parent) {
+        static_cast<void>(prctl(PR_SET_PDEATHSIG, 0));
+        throw std::runtime_error("authentication parent process exited");
+    }
 }
 
 int run_cancellable_program(
@@ -363,7 +390,36 @@ int run_cancellable_program(
     int rc = posix_spawnattr_setpgroup(attributes.get(), 0);
     if(rc != 0)
         throw std::system_error(rc, std::generic_category(), "posix_spawnattr_setpgroup");
-    rc = posix_spawnattr_setflags(attributes.get(), POSIX_SPAWN_SETPGROUP);
+
+    sigset_t child_mask;
+    if(sigemptyset(&child_mask) != 0)
+        throw std::system_error(errno, std::generic_category(), "sigemptyset");
+    rc = posix_spawnattr_setsigmask(attributes.get(), &child_mask);
+    if(rc != 0)
+        throw std::system_error(rc, std::generic_category(), "posix_spawnattr_setsigmask");
+
+    sigset_t child_defaults;
+    if(
+        sigemptyset(&child_defaults) != 0 ||
+        sigaddset(&child_defaults, SIGINT) != 0 ||
+        sigaddset(&child_defaults, SIGTERM) != 0
+    ) {
+        throw std::system_error(errno, std::generic_category(), "prepare child signals");
+    }
+    rc = posix_spawnattr_setsigdefault(attributes.get(), &child_defaults);
+    if(rc != 0) {
+        throw std::system_error(
+            rc,
+            std::generic_category(),
+            "posix_spawnattr_setsigdefault"
+        );
+    }
+
+    constexpr short spawn_flags =
+        POSIX_SPAWN_SETPGROUP |
+        POSIX_SPAWN_SETSIGMASK |
+        POSIX_SPAWN_SETSIGDEF;
+    rc = posix_spawnattr_setflags(attributes.get(), spawn_flags);
     if(rc != 0)
         throw std::system_error(rc, std::generic_category(), "posix_spawnattr_setflags");
 
